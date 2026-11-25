@@ -50,4 +50,7 @@ const Implementation& reference_implementation();
 // decided the call. Returns the predicate value.
 double staged_reference_call(Pred pred, const double* c, int* stage);
 
+// The same for the library: calls its test-only build (src/test_hooks.h).
+double staged_library_call(Pred pred, const double* c, int* stage);
+
 }  // namespace shewchuk_test

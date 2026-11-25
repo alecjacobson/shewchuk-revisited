@@ -2,7 +2,10 @@
 
 #include <cstring>
 
+#include "shewchuk/predicates.h"
 #include "shewchuk_ref.h"
+#include "stages.h"
+#include "test_hooks.h"
 
 extern "C" {
 // Test-only builds of the same pristine file (see tests/CMakeLists.txt).
@@ -15,6 +18,14 @@ SHEWCHUK_REF_DECLARE(shewchuk_contracted_)
 
 namespace shewchuk_test {
 namespace {
+
+// The stage numbers of the library's test-only build are the suite's.
+constexpr bool same_stage(int library_stage, int suite_stage) {
+  return library_stage == suite_stage;
+}
+static_assert(same_stage(SHEWCHUK_STAGE_A0, STAGE_A0) && same_stage(SHEWCHUK_STAGE_A, STAGE_A) &&
+              same_stage(SHEWCHUK_STAGE_B, STAGE_B) && same_stage(SHEWCHUK_STAGE_BX, STAGE_BX) &&
+              same_stage(SHEWCHUK_STAGE_C, STAGE_C) && same_stage(SHEWCHUK_STAGE_D, STAGE_D));
 
 // The 1996 functions take non-const pointers but never write through them.
 double* unconst(const double* p) { return const_cast<double*>(p); }
@@ -90,6 +101,12 @@ const std::vector<Implementation>& all_implementations() {
        always_available},
       {"reference_staged", "the same file with stage-recording instrumentation (test only)",
        staged_orient2d, staged_orient3d, staged_incircle, staged_insphere, always_available},
+      {"library", "the library (src/predicates.cpp): bit-identical port of the reference",
+       shewchuk_orient2d, shewchuk_orient3d, shewchuk_incircle, shewchuk_insphere,
+       always_available},
+      {"library_hooked", "the library's test-only build with stage recording",
+       shewchuk_hooked_orient2d, shewchuk_hooked_orient3d, shewchuk_hooked_incircle,
+       shewchuk_hooked_insphere, always_available},
 #if SHEWCHUK_HAVE_CONTRACTED_REFERENCE
       {"reference_contracted",
        "NEGATIVE CONTROL: the same file built with -O2 -ffp-contract=fast; must be wrong",
@@ -117,6 +134,14 @@ double staged_reference_call(Pred pred, const double* c, int* stage) {
   shewchuk_staged_last_stage = -1;
   const double value = staged.call(pred, c);
   *stage = shewchuk_staged_last_stage;
+  return value;
+}
+
+double staged_library_call(Pred pred, const double* c, int* stage) {
+  static const Implementation& hooked = *find_implementation("library_hooked");
+  shewchuk_hooked_last_stage = -1;
+  const double value = hooked.call(pred, c);
+  *stage = shewchuk_hooked_last_stage;
   return value;
 }
 
