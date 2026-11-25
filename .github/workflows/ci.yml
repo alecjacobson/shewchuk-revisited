@@ -36,9 +36,42 @@ jobs:
         run: cmake --build build -j 4
       - name: Test
         run: ctest --test-dir build --output-on-failure -j 4
-      - name: Stage table, hashes and negative control
+      - name: Stage tables, hashes, constants and negative controls
         if: always()
-        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract)$" --verbose
+        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|differential.library|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
+
+  # The library and the tests under sanitizers. The pristine reference is not
+  # instrumented (cmake/Sanitizers.cmake): it has a known one-past-the-end
+  # read, which the library must not have.
+  sanitizers:
+    name: linux clang ${{ matrix.sanitizer.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer:
+          - {name: asan+ubsan, flags: "address,undefined"}
+          - {name: tsan, flags: thread}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GMP
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DSHEWCHUK_REQUIRE_GMP=ON
+          -DSHEWCHUK_SANITIZE=${{ matrix.sanitizer.flags }}
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 4
+        env:
+          ASAN_OPTIONS: detect_stack_use_after_return=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          TSAN_OPTIONS: halt_on_error=1
 
   macos:
     name: macos apple-clang Release
@@ -53,9 +86,9 @@ jobs:
         run: cmake --build build -j 3
       - name: Test
         run: ctest --test-dir build --output-on-failure -j 3
-      - name: Stage table, hashes and negative control
+      - name: Stage tables, hashes, constants and negative controls
         if: always()
-        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract)$" --verbose
+        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|differential.library|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
 
   windows:
     name: windows msvc Release
@@ -70,6 +103,6 @@ jobs:
         run: cmake --build build --config Release -j 4
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure -j 4
-      - name: Stage table, hashes and negative control
+      - name: Stage tables, hashes, constants and negative controls
         if: always()
-        run: ctest --test-dir build -C Release -R "^(stages.coverage|differential.reference|negative_control.fp_contract)$" --verbose
+        run: ctest --test-dir build -C Release -R "^(stages.coverage|differential.reference|negative_control.fp_contract|differential.library|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose

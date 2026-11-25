@@ -34,7 +34,8 @@ void usage() {
       "  --tier NAME              corpus tier: quick (default) or deep\n"
       "  --cases-per-generator N  custom corpus size instead of a tier\n"
       "  --check-golden           fail unless the corpus hash matches corpus.h and,\n"
-      "                           for the reference, the value hash does too\n"
+      "                           for the reference and with --require-identical,\n"
+      "                           the value hash does too\n"
       "  --require-identical      fail unless every value equals the reference's\n"
       "  --expect-mismatch        negative control: pass only if the implementation\n"
       "                           DISAGREES with the oracle at least once\n"
@@ -200,9 +201,11 @@ int main(int argc, char** argv) {
                   tier->corpus_hash);
       ok = false;
     }
-    if (is_reference && value_hash.value() != tier->reference_value_hash) {
-      std::printf("FAIL: reference value hash differs from the recorded %016" PRIx64
-                  ": this build of predicates.c does not return the recorded values\n",
+    // The recorded value hash binds the reference and every implementation
+    // declared refactor-only.
+    if ((is_reference || require_identical) && value_hash.value() != tier->reference_value_hash) {
+      std::printf("FAIL: value hash differs from the recorded reference value hash %016" PRIx64
+                  ": this build does not return the recorded values\n",
                   tier->reference_value_hash);
       ok = false;
     }

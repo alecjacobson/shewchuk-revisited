@@ -22,6 +22,7 @@ Options:
 |---|---|
 | `-DSHEWCHUK_DEEP_TESTS=ON` | also registers the deep tier (`deep.*` tests, 20x the cases, about a minute) |
 | `-DSHEWCHUK_REQUIRE_GMP=ON` | configuration fails if GMP is missing, instead of skipping the GMP cross-check |
+| `-DSHEWCHUK_SANITIZE=address,undefined` | builds the library and the tests (not the pristine reference) with these sanitizers; `thread` for ThreadSanitizer |
 
 GMP (`libgmp-dev`, `brew install gmp`) and Python 3 are optional; they enable
 two extra cross-checks of the oracle.
@@ -40,6 +41,21 @@ two extra cross-checks of the oracle.
 | `differential.reference_staged` | the instrumented build returns bit-identical values |
 | `negative_control.fp_contract` | the same file built with `-O2 -ffp-contract=fast` IS caught returning wrong signs (skipped where the compiler has no such mode) |
 
+Tests of the library (`src/predicates.cpp`):
+
+| Test | What it proves |
+|---|---|
+| `differential.library` | zero sign mismatches against the oracle; every value equals the reference's bit for bit; the value hash equals the recorded reference hash |
+| `differential.library_hooked` | the same for the library's test-only build |
+| `library.stages` | every stage of the library decides at least 2% of its cases, and every single case is decided by the same stage as in the reference |
+| `library.expansions` | `fast_expansion_sum_zeroelim`, `scale_expansion_zeroelim` and `estimate` return the same components as the reference's routines on random and adversarial expansions, up to the largest lengths any predicate uses |
+| `library.constants` | the compile-time constants equal the globals `exactinit()` computes, their formulas and their documented bit patterns |
+| `library.api`, `library.api_c` | the public headers from C++ and C, including the opt-in 1996 names |
+| `library.threads` | several threads calling the predicates get the single-threaded values |
+| `library.symbols` | the library exports the four `shewchuk_` predicates and nothing else |
+| `library.no_fma` | the library's object code contains no fused multiply-add and no call to `fma()` (skipped if no disassembler is found or the architecture is not arm64 / x86-64) |
+| `negative_control.no_fma` | that check IS triggered by the contracted reference build |
+
 A skipped test is reported as skipped, never as passed.
 
 ## Layout
@@ -54,6 +70,25 @@ A skipped test is reported as skipped, never as passed.
 - `tests/generators.*`: the stage-targeted, deterministic input generators.
 - `tests/differential.cpp`: the driver. `differential --list` shows the
   implementations and tiers; `differential --impl NAME` runs one.
+- `src/test_hooks.h`: the library's test-only build. The same source and
+  flags as the shipped library, compiled a second time with
+  `SHEWCHUK_PREDICATES_TEST_HOOKS`: different symbol names, a record of the
+  stage that decided each call, and exported expansion routines. None of it
+  exists in the shipped library.
+
+## Sanitizers
+
+```sh
+cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSHEWCHUK_SANITIZE=address,undefined
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSHEWCHUK_SANITIZE=thread
+```
+
+The option instruments the library and the tests. The pristine reference is
+left alone on purpose: it reads one element past the end of an array in
+`fast_expansion_sum_zeroelim` (the value is unused), AddressSanitizer reports
+that, and the file is never edited. The library does not have that read, and
+the sanitizer build of the whole suite is how that is checked. Do not put
+`-fsanitize` into `CMAKE_C_FLAGS`.
 
 ## Adding an implementation
 

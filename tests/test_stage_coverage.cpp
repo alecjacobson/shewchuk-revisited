@@ -1,12 +1,18 @@
 // Stage-coverage gate.
 //
-// Runs the corpus through the stage-instrumented reference, prints which
-// stage decided how many cases, and fails unless every stage of every
-// predicate is reached often enough. A corpus that never leaves the first
-// filter would make every other exactness test meaningless.
+//   test_stage_coverage [tier] [reference|library]
 //
-// Also checks that the instrumented build returns exactly the values of the
-// pristine build, i.e. that the instrumentation is behavior-neutral.
+// Runs the corpus through a stage-recording build, prints which stage decided
+// how many cases, and fails unless every stage of every predicate is reached
+// often enough. A corpus that never leaves the first filter would make every
+// other exactness test meaningless.
+//
+// "reference" (the default) uses the instrumented copy of the pristine file.
+// "library" uses the library's test-only build, and additionally requires
+// that every single case is decided by the same stage as in the reference.
+//
+// Also checks that the stage-recording build returns exactly the values of
+// the pristine build, i.e. that the instrumentation is behavior-neutral.
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -42,14 +48,21 @@ int main(int argc, char** argv) {
     std::printf("unknown tier '%s'\n", argv[1]);
     return 2;
   }
+  const char* subject = argc > 2 ? argv[2] : "reference";
+  const bool library = std::strcmp(subject, "library") == 0;
+  if (!library && std::strcmp(subject, "reference") != 0) {
+    std::printf("unknown subject '%s' (reference or library)\n", subject);
+    return 2;
+  }
   initialize_implementations();
   const Implementation& reference = reference_implementation();
 
   long totals[NUM_PREDS][NUM_STAGES] = {};
   long cases[NUM_PREDS] = {};
-  long unrecorded = 0, value_differences = 0;
+  long unrecorded = 0, value_differences = 0, stage_differences = 0;
 
-  std::printf("Share of cases decided by each stage, in percent (tier %s)\n", tier->name);
+  std::printf("Share of cases decided by each stage of the %s, in percent (tier %s)\n", subject,
+              tier->name);
   std::printf("%-42s %8s | %6s %6s %6s %6s %6s %6s\n", "generator", "cases", "A0", "A", "B", "Bx",
               "C", "D");
   const Generator* current = nullptr;
@@ -66,7 +79,15 @@ int main(int argc, char** argv) {
       current = &generator;
     }
     int stage = -1;
-    const double staged_value = staged_reference_call(generator.pred, c, &stage);
+    double staged_value;
+    if (library) {
+      staged_value = staged_library_call(generator.pred, c, &stage);
+      int reference_stage = -1;
+      staged_reference_call(generator.pred, c, &reference_stage);
+      if (stage != reference_stage) stage_differences++;
+    } else {
+      staged_value = staged_reference_call(generator.pred, c, &stage);
+    }
     const double value = reference.call(generator.pred, c);
     if (std::memcmp(&staged_value, &value, sizeof value) != 0) value_differences++;
     if (stage < 0 || stage >= NUM_STAGES) {
@@ -114,9 +135,14 @@ int main(int argc, char** argv) {
   if (unrecorded) std::printf("%ld calls returned without recording a stage\n", unrecorded);
   CHECK(unrecorded == 0);
   if (value_differences) {
-    std::printf("%ld values differ between the instrumented and the pristine build\n",
+    std::printf("%ld values differ between the stage-recording and the pristine build\n",
                 value_differences);
   }
   CHECK(value_differences == 0);
+  if (stage_differences) {
+    std::printf("%ld cases are decided by a different stage than in the reference\n",
+                stage_differences);
+  }
+  CHECK(stage_differences == 0);
   return finish("stage coverage");
 }
