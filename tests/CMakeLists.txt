@@ -109,6 +109,13 @@ set_target_properties(test_api_c PROPERTIES LINKER_LANGUAGE CXX)
 function(shewchuk_add_test name)
   add_test(NAME ${name} COMMAND ${ARGN})
   set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+  if(SHEWCHUK_SANITIZE)
+    # A small quarantine keeps AddressSanitizer's memory use around 100 MB per
+    # test process; with the default (256 MB) the oracle's many small
+    # allocations push it past 800 MB.
+    set_tests_properties(${name} PROPERTIES ENVIRONMENT
+      "ASAN_OPTIONS=quarantine_size_mb=16:detect_stack_use_after_return=1:strict_string_checks=1;UBSAN_OPTIONS=print_stacktrace=1;TSAN_OPTIONS=halt_on_error=1")
+  endif()
 endfunction()
 
 shewchuk_add_test(reference.sha256

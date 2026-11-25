@@ -88,7 +88,9 @@ left alone on purpose: it reads one element past the end of an array in
 `fast_expansion_sum_zeroelim` (the value is unused), AddressSanitizer reports
 that, and the file is never edited. The library does not have that read, and
 the sanitizer build of the whole suite is how that is checked. Do not put
-`-fsanitize` into `CMAKE_C_FLAGS`.
+`-fsanitize` into `CMAKE_C_FLAGS`. CTest sets the sanitizer run-time options
+itself (a small AddressSanitizer quarantine keeps each test process around
+100 MB).
 
 ## Adding an implementation
 
