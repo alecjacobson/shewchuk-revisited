@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: linux ${{ matrix.compiler.name }} ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - {name: gcc, cc: gcc, cxx: g++}
+          - {name: clang, cc: clang, cxx: clang++}
+        build_type: [Release, Debug]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GMP
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }}
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+          -DSHEWCHUK_REQUIRE_GMP=ON
+          -DSHEWCHUK_DEEP_TESTS=${{ matrix.build_type == 'Release' && 'ON' || 'OFF' }}
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 4
+      - name: Stage table, hashes and negative control
+        if: always()
+        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract)$" --verbose
+
+  macos:
+    name: macos apple-clang Release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GMP
+        run: brew list gmp >/dev/null 2>&1 || brew install gmp
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSHEWCHUK_REQUIRE_GMP=ON
+      - name: Build
+        run: cmake --build build -j 3
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 3
+      - name: Stage table, hashes and negative control
+        if: always()
+        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract)$" --verbose
+
+  windows:
+    name: windows msvc Release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No GMP here: oracle.gmp_crosscheck reports itself as skipped. MSVC has
+      # no -ffp-contract=fast, so negative_control.fp_contract is skipped too.
+      - name: Configure
+        run: cmake -S . -B build
+      - name: Build
+        run: cmake --build build --config Release -j 4
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure -j 4
+      - name: Stage table, hashes and negative control
+        if: always()
+        run: ctest --test-dir build -C Release -R "^(stages.coverage|differential.reference|negative_control.fp_contract)$" --verbose
