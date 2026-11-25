@@ -1,0 +1,13 @@
+/build*/
+/out/
+/.cache/
+/Testing/
+compile_commands.json
+CMakeUserPresets.json
+*.profraw
+*.profdata
+.DS_Store
+__pycache__/
+*.pyc
+/.venv/
+/.claude/
