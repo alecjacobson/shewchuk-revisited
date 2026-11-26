@@ -29,6 +29,35 @@ Every claim holds only if all of these do.
 | 4 | Gradual underflow is on (no flush-to-zero, no denormals-are-zero mode), so that `x - y == 0` only if `x == y`. Inside the domain of assumption 3 no subnormal number should arise at all; this assumption is what keeps the first sign tests meaningful at the edge. | The caller's responsibility; not checked. |
 | 5 | Inputs are finite. | Not checked; NaN and infinities give unspecified results. |
 
+### Callers' flags and link-time optimization
+
+Assumption 2 is about the library's translation unit only. Code that calls
+the library may be compiled with any flags, including `-Ofast` /
+`-ffast-math`, and the whole program may be link-time optimized (`-flto`,
+`CMAKE_INTERPROCEDURAL_OPTIMIZATION`, MSVC `/GL`), with those flags on the
+link line. This rests on how the compilers record floating-point semantics,
+not on anything the library does:
+
+- GCC stores the optimization options of each function in its link-time
+  representation and compiles each function with its own.
+- clang records the permission to contract or reassociate on each
+  floating-point instruction, so library code that is inlined into a
+  fast-math caller keeps its strict semantics.
+
+Observed on arm64 with GCC 16, LLVM 22 and Apple clang (thin and full LTO):
+clang inlines `shewchuk_orient2d` into the fast-math caller, GCC keeps every
+library function out of line, and in both cases the linked executable has no
+fused multiply-add in any code that came from the library.
+
+Tested by `library.lto_fast_math_caller`, with a negative control
+(see [testing.md](testing.md)). What is not covered: options that change code
+generation for the whole link regardless of how each translation unit was
+compiled (for example passing `-fp-contract=fast` to the LLVM back end
+through the linker), and compiling `src/predicates.cpp` outside the project's
+build system without the flags of `cmake/StrictFloatingPoint.cmake`. A
+program linked with `-ffast-math` may also start with flush-to-zero enabled
+(GCC links `crtfastmath.o` on some targets), which is assumption 4.
+
 ## Building blocks
 
 Each is an error-free transformation: the outputs represent the exact result.
