@@ -14,7 +14,11 @@
 
 /* Stage numbers. tests/stages.h uses the same values (checked there). */
 enum {
-  SHEWCHUK_STAGE_A0 = 0, /* orient2d only: decided by the signs of the two products */
+  /* orient2d only: the two products have opposite signs or one is zero. The
+   * 1996 code returns on that before its first filter. The library has one
+   * test for A0 and A; it reports A0 when that test decides a call of this
+   * class and A when it decides any other call. */
+  SHEWCHUK_STAGE_A0 = 0,
   SHEWCHUK_STAGE_A = 1,  /* first floating-point filter (errboundA) */
   SHEWCHUK_STAGE_B = 2,  /* second filter (errboundB) */
   SHEWCHUK_STAGE_BX = 3, /* all coordinate-difference tails are zero */

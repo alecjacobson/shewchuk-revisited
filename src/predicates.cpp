@@ -23,6 +23,8 @@
 //     fabs(det) with the error bound once, instead of the Absolute() macro
 //     and two comparisons; docs/exactness.md ("The first filters") shows that
 //     no returned value can change;
+//   * orient2d decides the sign test on its two products and the first
+//     filter with one comparison (see shewchuk_orient2d);
 //   * SHEWCHUK_STAGE_HIT() marks which stage decides a call. It expands to
 //     nothing except in the test-only build (test_hooks.h);
 //   * orient2dadapt(), orient3dadapt() and incircleadapt() are never inlined
@@ -448,7 +450,22 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
 
 }  // namespace
 
-/* predicates.c lines 1619-1653: orient2d() */
+/* predicates.c lines 1619-1653: orient2d().
+ *
+ * The 1996 code first looks at the signs of the two products: if they differ,
+ * or one product is zero, it returns det at once (stage A0); otherwise it
+ * forms detsum = |detleft| + |detright| and applies the filter (stage A).
+ * Here both are one test without a data-dependent branch on the signs. The
+ * returned values are the same bit for bit (docs/exactness.md, "orient2d:
+ * the merged first test"):
+ *   - products of the same sign: detsum, errbound and the test are the
+ *     original's;
+ *   - opposite signs, or a zero product: |detleft - detright| is exactly
+ *     |detleft| + |detright|, so fabs(det) == detsum bit for bit, and
+ *     detsum >= ccwerrboundA * detsum always holds; det is returned, as in
+ *     1996.
+ * Keep `>=` (with `>`, two zero products would fall through to
+ * orient2dadapt) and keep the two products separately rounded. */
 double shewchuk_orient2d(const double *pa, const double *pb, const double *pc)
 {
   double detleft, detright, det;
@@ -458,28 +475,14 @@ double shewchuk_orient2d(const double *pa, const double *pb, const double *pc)
   detright = (pa[1] - pc[1]) * (pb[0] - pc[0]);
   det = detleft - detright;
 
-  if (detleft > 0.0) {
-    if (detright <= 0.0) {
-      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A0);
-      return det;
-    } else {
-      detsum = detleft + detright;
-    }
-  } else if (detleft < 0.0) {
-    if (detright >= 0.0) {
-      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A0);
-      return det;
-    } else {
-      detsum = -detleft - detright;
-    }
-  } else {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A0);
-    return det;
-  }
-
+  detsum = std::fabs(detleft) + std::fabs(detright);
   errbound = ccwerrboundA * detsum;
-  if ((det >= errbound) || (-det >= errbound)) {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
+  if (std::fabs(det) >= errbound) {
+    // Test-only build: report the stage the 1996 code decides this call in.
+    SHEWCHUK_STAGE_HIT(((detleft > 0.0) && (detright > 0.0)) ||
+                       ((detleft < 0.0) && (detright < 0.0))
+                           ? SHEWCHUK_STAGE_A
+                           : SHEWCHUK_STAGE_A0);
     return det;
   }
 
