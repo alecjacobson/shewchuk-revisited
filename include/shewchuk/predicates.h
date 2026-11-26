@@ -20,10 +20,17 @@
  * doubles. The functions never write through their arguments, keep no state,
  * need no initialization call and may be called from any number of threads.
  *
- * Domain: the result is exact as long as no intermediate operation overflows
- * or underflows. The 1996 paper guarantees that for coordinates that are zero
- * or have magnitudes in [2^-142, 2^201]. NaN or infinite coordinates give an
- * unspecified result.
+ * Domain: every finite double. If all coordinates are finite, the result is
+ * finite and its sign is exact, whatever their magnitudes: subnormal numbers,
+ * numbers near the largest double and any mixture included. (The 1996 code
+ * is exact only as long as no intermediate operation overflows or
+ * underflows.) If a coordinate is an infinity or a NaN, the result is a NaN;
+ * note that a NaN is neither > 0 nor < 0.
+ *
+ * This holds in the default floating-point environment: rounding to nearest,
+ * and subnormal numbers enabled. A thread that has selected another rounding
+ * mode, or flush-to-zero / denormals-are-zero (as -ffast-math start-up code
+ * does on some platforms), can get wrong signs.
  *
  * The functions are defined in the compiled library, which the project's
  * build compiles with the floating-point flags exactness depends on. The code

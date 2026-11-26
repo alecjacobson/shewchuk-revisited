@@ -422,6 +422,7 @@ endif()
 
 if(SHEWCHUK_DEEP_TESTS)
   shewchuk_add_test(deep.library.stages test_stage_coverage deep library)
+  shewchuk_add_test(deep.library.input_domain test_input_domain deep)
   shewchuk_add_test(deep.library.expansions test_expansions 60000)
   shewchuk_add_test(deep.differential.library
     differential --impl library --tier deep --check-golden --integer-stage)
@@ -431,7 +432,8 @@ if(SHEWCHUK_DEEP_TESTS)
     differential --impl library_portable --tier deep --check-golden --integer-stage)
   shewchuk_add_test(deep.integer_stage.checked test_integer_stage_checked deep)
   shewchuk_add_test(deep.integer_stage.checked_portable test_integer_stage_checked_portable deep)
-  set_tests_properties(deep.library.stages deep.library.expansions deep.differential.library
+  set_tests_properties(deep.library.stages deep.library.input_domain deep.library.expansions
+    deep.differential.library
     deep.differential.library_expansion_only deep.differential.library_portable
     deep.integer_stage.checked deep.integer_stage.checked_portable
     PROPERTIES TIMEOUT 3600 LABELS deep)

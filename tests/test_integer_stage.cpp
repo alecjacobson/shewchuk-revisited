@@ -22,12 +22,16 @@
 //      tier that width selects, and must see enough cases in every tier;
 //   4. worst-case magnitudes: inputs built to make every intermediate as
 //      large as possible, at widths exactly at each tier's limit and one past
-//      it, anywhere in the exponent range of a double (subnormals included);
+//      it, anywhere in the exponent range of a double (subnormals included).
+//      A case one past the widest fast tier is refused if it is inside the
+//      floating-point domain (tests/width.h) and decided by the wide tier
+//      if it is not; the wide tier is also run at the largest width there
+//      is, and every case is run under every request (Request) of the stage;
 //   5. negative control: a tier evaluated on inputs wider than its limit IS
 //      caught returning wrong signs (and, in the checked build, IS caught by
 //      the bound checks);
-//   6. non-finite coordinates are refused, and the library then returns what
-//      its build without the integer stage returns;
+//   6. non-finite coordinates are reported as such, and the library then
+//      returns NaN;
 //   7. checked build only: no bound of the proof was violated anywhere above,
 //      and the worst-case inputs came within 5 bits of every bound.
 #include <cfloat>
@@ -54,25 +58,27 @@ namespace stage = shewchuk::detail::integer_stage;
 namespace {
 
 static_assert(stage::max_width(stage::num_tiers) == INTEGER_STAGE_MAX_WIDTH,
-              "tests/width.h must state the library's widest tier");
+              "tests/width.h must state the library's widest fast tier");
+static_assert(stage::max_width(1) == 61 && stage::max_width(2) == 125,
+              "tests/width.h must state the library's tier limits");
+static_assert(stage::wide_tier == INTEGER_STAGE_WIDE_TIER,
+              "tests/width.h must state the library's wide tier");
+static_assert(stage::floating_point_max_exponent == FLOATING_POINT_MAX_EXPONENT &&
+                  stage::floating_point_min_grid == FLOATING_POINT_MIN_GRID,
+              "tests/width.h must state the library's floating-point domain");
 
-// The tier that must decide a case of width `width`; 0 if the stage must
-// refuse it.
-int expected_tier(int width) {
-  if (width < 0) return 0;
-  for (int tier = 1; tier <= stage::num_tiers; tier++) {
-    if (width <= stage::max_width(tier)) return tier;
-  }
-  return 0;
-}
+// Index of a tier in a table with one column per tier: 0 for "not decided",
+// 1 to 3 for the fast tiers, 4 for the wide tier.
+int tier_column(int tier) { return tier == stage::wide_tier ? stage::num_tiers + 1 : tier; }
 
 // The integer stage's answer for a case in the suite's flat layout.
-int stage_sign(Pred pred, const double* c) {
+int stage_sign(Pred pred, const double* c,
+               stage::Request request = stage::Request::exact_or_floating_point) {
   switch (pred) {
-    case ORIENT2D: return stage::orient2d(c, c + 2, c + 4);
-    case ORIENT3D: return stage::orient3d(c, c + 3, c + 6, c + 9);
-    case INCIRCLE: return stage::incircle(c, c + 2, c + 4, c + 6);
-    default: return stage::insphere(c, c + 3, c + 6, c + 9, c + 12);
+    case ORIENT2D: return stage::orient2d(c, c + 2, c + 4, request);
+    case ORIENT3D: return stage::orient3d(c, c + 3, c + 6, c + 9, request);
+    case INCIRCLE: return stage::incircle(c, c + 2, c + 4, c + 6, request);
+    default: return stage::insphere(c, c + 3, c + 6, c + 9, c + 12, request);
   }
 }
 
@@ -82,28 +88,42 @@ void print_case(Pred pred, const double* c) {
   std::printf("\n");
 }
 
-// Runs the stage on one case and checks everything that can be checked about
-// a single call: the recorded width equals the independently computed one,
-// the deciding tier is the one that width selects (or the call is refused
-// exactly when no tier holds it), and the sign is the oracle's. Returns the
-// tier (0 if refused).
-int check_case(Pred pred, const double* c) {
+// Runs the stage on one finite case and checks everything that can be checked
+// about a single call: the recorded width equals the independently computed
+// one, the deciding tier is the one the width and the floating-point domain
+// select (tests/width.h; the call is refused exactly when it is wider than
+// the fast tiers and inside that domain), and the sign is the oracle's.
+// Then the two other requests: `always_exact` never refuses (a refused case
+// goes to the wide tier), and `prefer_floating_point` refuses exactly the
+// cases inside the domain. Returns the tier of the first call (0 if refused).
+//
+// The wide tier is slow (it multiplies integers of thousands of bits), and
+// the corpus has many refused cases: with `sample_wide`, only one refused
+// case in 16 is also sent to the wide tier.
+int check_case(Pred pred, const double* c, bool sample_wide = false) {
   const int width = width_of(c, NUM_COORDS[pred]);
-  const int tier = expected_tier(width);
+  const int tier = expected_integer_tier(pred, c);
+  const int exact = oracle_sign(pred, c);
   const int sign = stage_sign(pred, c);
   bool ok = stage::last_width == width && stage::last_tier == tier;
-  if (tier == 0) {
-    ok = ok && sign == stage::refused;
-  } else {
-    ok = ok && sign == oracle_sign(pred, c);
+  ok = ok && sign == (tier == 0 ? stage::refused : exact);
+  static unsigned long refused_cases = 0;
+  if (tier != 0 || !sample_wide || refused_cases++ % 16 == 0) {
+    const int forced = stage_sign(pred, c, stage::Request::always_exact);
+    ok = ok && forced == exact && stage::last_tier == (tier == 0 ? stage::wide_tier : tier);
+  }
+  {
+    const bool in_domain = in_floating_point_domain(pred, c) && width != 0;
+    const int preferred = stage_sign(pred, c, stage::Request::prefer_floating_point);
+    ok = ok && (in_domain ? preferred == stage::refused && stage::last_tier == 0
+                          : preferred == exact && stage::last_tier != 0);
   }
   if (!ok) {
     static int reports = 0;
     if (reports++ < 5) {
       std::printf("  integer stage: returned %d in tier %d at width %d; independent width %d, "
                   "expected tier %d, exact sign %d\n",
-                  sign, stage::last_tier, stage::last_width, width, tier,
-                  tier ? oracle_sign(pred, c) : 0);
+                  sign, stage::last_tier, stage::last_width, width, tier, exact);
       print_case(pred, c);
     }
   }
@@ -391,10 +411,10 @@ void test_scaling() {
 // ---------------------------------------------------------------------------
 
 void test_corpus(const Tier& tier) {
-  long decided[NUM_PREDS][stage::num_tiers + 1] = {};
+  long decided[NUM_PREDS][stage::num_tiers + 2] = {};
   long total[NUM_PREDS] = {};
   for_each_case(tier.cases_per_generator, [&](const Generator& generator, const double* c) {
-    decided[generator.pred][check_case(generator.pred, c)]++;
+    decided[generator.pred][tier_column(check_case(generator.pred, c, true))]++;
     total[generator.pred]++;
   });
   std::printf("\nForce-stage on the corpus (tier %s): cases decided by each tier of the integer "
@@ -403,9 +423,12 @@ void test_corpus(const Tier& tier) {
   for (int p = 0; p < NUM_PREDS; p++) {
     std::printf("%-9s %9ld %9ld %9ld %9ld %9ld\n", PRED_NAME[p], total[p], decided[p][1],
                 decided[p][2], decided[p][3], decided[p][0]);
-    // Every tier, and the refusal, must see a real share of each predicate's
-    // cases: at least 2%.
+    // Every fast tier, and the refusal, must see a real share of each
+    // predicate's cases: at least 2%. The corpus is inside the floating-point
+    // domain, so the wide tier decides none of it on the first request
+    // (check_case runs it on one refused case in 16).
     for (int t = 0; t <= stage::num_tiers; t++) CHECK(decided[p][t] >= total[p] / 50);
+    CHECK(decided[p][stage::num_tiers + 1] == 0);
   }
 }
 
@@ -413,11 +436,19 @@ void test_corpus(const Tier& tier) {
 // 4. Worst-case magnitudes at the tier limits
 // ---------------------------------------------------------------------------
 
-// The largest magnitude a scaled coordinate of width W can have, as a
-// double: 2^W - 1 if that has at most 53 bits, else (2^53 - 1) 2^(W-53).
-double largest_magnitude(int W) {
-  if (W <= 53) return std::ldexp(1.0, W) - 1.0;
-  return std::ldexp(0x1.fffffffffffffp52, W - 53);
+// A scaled coordinate as significand * 2^exponent, the significand an
+// integer of at most 53 bits. (Kept apart because 2^exponent alone can be
+// beyond the range of a double: widths go up to 2098.)
+struct Magnitude {
+  double significand;
+  int exponent;
+};
+
+// The largest magnitude a scaled coordinate of width W can have: 2^W - 1 if
+// that has at most 53 bits, else (2^53 - 1) 2^(W-53).
+Magnitude largest_magnitude(int W) {
+  if (W <= 53) return {std::ldexp(1.0, W) - 1.0, 0};
+  return {0x1.fffffffffffffp52, W - 53};
 }
 
 // Writes a case of width exactly W whose scaled coordinates are extreme.
@@ -437,40 +468,45 @@ double largest_magnitude(int W) {
 void extreme_case(Rng& r, Pred pred, int W, int low, std::uint64_t pattern, int anchor, bool mix,
                   double* c) {
   const int count = NUM_COORDS[pred];
-  const double P = largest_magnitude(W);
+  const Magnitude P = largest_magnitude(W);
+  // The double for a scaled magnitude, with the sign `pattern` gives
+  // coordinate i.
+  auto write = [&](int i, Magnitude magnitude) {
+    const double x = std::ldexp(magnitude.significand, magnitude.exponent + low);
+    c[i] = ((pattern >> i) & 1) ? -x : x;
+  };
   for (int i = 0; i < count; i++) {
-    double magnitude = P;
+    Magnitude magnitude = P;
     if (mix) {
       switch (r.below(8)) {
-        case 0: magnitude = 0.0; break;
-        case 1: magnitude = std::ldexp(1.0, W - 1); break;
-        case 2: magnitude = 1.0; break;
+        case 0: magnitude = {0.0, 0}; break;
+        case 1: magnitude = {1.0, W - 1}; break;
+        case 2: magnitude = {1.0, 0}; break;
         case 3: {  // a random value below 2^W with at most 53 significant bits
           const int bits = r.range(1, W < 53 ? W : 53);
-          magnitude = std::floor(std::fabs(r.with_exponent(bits - 1)));
-          magnitude = std::ldexp(magnitude, r.range(0, W - bits));
+          magnitude.significand = std::floor(std::fabs(r.with_exponent(bits - 1)));
+          magnitude.exponent = r.range(0, W - bits);
           break;
         }
         default: break;
       }
     }
-    c[i] = ((pattern >> i) & 1) ? -magnitude : magnitude;
+    write(i, magnitude);
   }
   // One coordinate of the largest magnitude and one odd one are needed for
   // the width to be exactly W. (For W <= 53, P itself is odd.)
-  c[(anchor + 1) % count] = ((pattern >> ((anchor + 1) % count)) & 1) ? -P : P;
-  if (W > 53) c[anchor] = ((pattern >> anchor) & 1) ? -1.0 : 1.0;
-  for (int i = 0; i < count; i++) c[i] = std::ldexp(c[i], low);
+  write((anchor + 1) % count, P);
+  if (W > 53) write(anchor, {1.0, 0});
 }
 
 // Runs extreme cases of the given width through the stage. With
 // 2^count * count sign-and-anchor patterns at most `budget`, all of them;
 // otherwise `budget` random ones. The same number of mixed cases follows.
-void test_extremes_at(Rng& r, Pred pred, int W, long budget) {
+// `tiers_seen` counts the cases per deciding tier (tier_column()).
+void test_extremes_at(Rng& r, Pred pred, int W, long budget, long* tiers_seen) {
   const int count = NUM_COORDS[pred];
   const std::uint64_t patterns = std::uint64_t{1} << count;
   const bool exhaustive = patterns * count <= static_cast<std::uint64_t>(budget);
-  const int tier = expected_tier(W);
   // Any position in the format that holds W bits: scaled unit 2^low with
   // low >= -1074 and low + W <= 1024. Mostly near the extremes.
   auto random_low = [&] {
@@ -478,7 +514,7 @@ void test_extremes_at(Rng& r, Pred pred, int W, long budget) {
       case 0: return -1074;
       case 1: return 1024 - W;
       case 2: return r.range(-1074, 1024 - W);
-      default: return r.range(-60, 60);
+      default: return 1024 - W >= 60 ? r.range(-60, 60) : r.range(-1074, 1024 - W);
     }
   };
   double c[MAX_COORDS];
@@ -486,7 +522,12 @@ void test_extremes_at(Rng& r, Pred pred, int W, long budget) {
   auto run = [&](std::uint64_t pattern, int anchor, bool mix) {
     extreme_case(r, pred, W, random_low(), pattern, anchor, mix, c);
     CHECK(width_of(c, count) == W);
-    CHECK(check_case(pred, c) == tier);
+    // The tier: the one of the width; past the fast tiers, the wide tier or a
+    // refusal, depending on where in the format the case is (check_case).
+    const int tier = check_case(pred, c);
+    CHECK(W > stage::max_width(stage::num_tiers) ? tier == 0 || tier == stage::wide_tier
+                                                 : W <= stage::max_width(tier));
+    tiers_seen[tier_column(tier)]++;
     cases++;
   };
   if (exhaustive) {
@@ -502,15 +543,34 @@ void test_extremes_at(Rng& r, Pred pred, int W, long budget) {
 
 void test_extremes(long budget) {
   Rng r(0xb0a7);
-  // Each tier's limit and one past it (the next tier, or the refusal), the
-  // widths around 53 bits where the shape of the largest magnitude changes,
-  // the limb boundaries, and the narrowest cases.
-  const int widths[] = {1,  2,  3,   52,  53,  54,  60,  61,  62,  63, 64,
-                        65, 66, 124, 125, 126, 127, 128, 129, 188, 189, 190, 191, 192, 253};
+  // Each fast tier's limit and one past it, the widths around 53 bits where
+  // the shape of the largest magnitude changes, the limb boundaries, and the
+  // narrowest cases.
+  const int widths[] = {1,  2,  3,  52,  53,  54,  60,  61,  62,  63, 64,
+                        65, 66, 124, 125, 126, 127, 128, 129, 188, 189};
   static_assert(stage::max_width(1) == 61 && stage::max_width(2) == 125 &&
                 stage::max_width(3) == 189, "list the limits and limit + 1 above");
+  // The wide tier: widths no fast tier holds, up to the largest width there
+  // is (a coordinate with its lowest bit at 2^-1074 and one of magnitude
+  // 2^1023). These cases are slow (the oracle too), so there are fewer.
+  const int wide_widths[] = {190, 191, 192, 253, 509, 1100, 2047, 2048, 2097, 2098};
+  static_assert(stage::max_finite_width == 2098, "list the largest width above");
   for (int p = 0; p < NUM_PREDS; p++) {
-    for (const int W : widths) test_extremes_at(r, static_cast<Pred>(p), W, budget);
+    long tiers_seen[stage::num_tiers + 2] = {};
+    for (const int W : widths) test_extremes_at(r, static_cast<Pred>(p), W, budget, tiers_seen);
+    // (At most 256 patterns per wide width, in the deep tier too: the checked
+    // build of the wide tier is very slow.)
+    const long wide_budget = budget / 32 < 256 ? budget / 32 : 256;
+    for (const int W : wide_widths) {
+      test_extremes_at(r, static_cast<Pred>(p), W, wide_budget, tiers_seen);
+    }
+    std::printf("worst-case magnitudes, %s: %ld cases in tier 1, %ld in tier 2, %ld in tier 3, "
+                "%ld in the wide tier, %ld refused\n",
+                PRED_NAME[p], tiers_seen[1], tiers_seen[2], tiers_seen[3],
+                tiers_seen[stage::num_tiers + 1], tiers_seen[0]);
+    // (Refusals need a case that is wide and inside the floating-point
+    // domain, which only a part of the wide cases are.)
+    for (int t = 0; t <= stage::num_tiers + 1; t++) CHECK(tiers_seen[t] > (t == 0 ? 40 : 100));
   }
 }
 
@@ -584,7 +644,6 @@ void test_too_narrow_tier(Rng& r) {
 
 void test_non_finite() {
   const Implementation& library = *find_implementation("library");
-  const Implementation& expansion_only = *find_implementation("library_expansion_only");
   const double inf = std::numeric_limits<double>::infinity();
   const double quiet = std::numeric_limits<double>::quiet_NaN();
   Rng r(0x9a9);
@@ -600,31 +659,25 @@ void test_non_finite() {
       const double bads[] = {inf, -inf, quiet, -quiet};
       c[r.below(NUM_COORDS[p])] = bads[r.below(4)];
       if (r.coin()) c[r.below(NUM_COORDS[p])] = bads[r.below(4)];
-      // The stage itself refuses ...
-      CHECK(stage_sign(pred, c) == stage::refused);
-      CHECK(stage::last_width == -1 && stage::last_tier == 0);
-      // ... and the library returns what it returns without the stage: the
-      // same value, or a NaN where that returns a NaN. (Which of several NaN
-      // operands an instruction propagates, sign and payload, is up to the
-      // compiler's operand order, so NaN bits may differ between two builds
-      // of the same source.)
-      const double with_stage = library.call(pred, c);
-      const double without_stage = expansion_only.call(pred, c);
-      const bool same = std::memcmp(&with_stage, &without_stage, sizeof with_stage) == 0 ||
-                        (std::isnan(with_stage) && std::isnan(without_stage));
-      if (!same) {
+      // The stage itself says so, under every request ...
+      for (const stage::Request request :
+           {stage::Request::exact_or_floating_point, stage::Request::prefer_floating_point,
+            stage::Request::always_exact}) {
+        CHECK(stage_sign(pred, c, request) == stage::not_finite);
+        CHECK(stage::last_width == -1 && stage::last_tier == 0);
+      }
+      // ... and the library returns NaN.
+      const double value = library.call(pred, c);
+      if (!std::isnan(value)) {
         if (differences < 5) {
-          std::printf("  non-finite input: %a with the integer stage, %a without\n", with_stage,
-                      without_stage);
+          std::printf("  non-finite input: the library returns %a\n", value);
           print_case(pred, c);
         }
         differences++;
       }
     }
   }
-  if (differences) {
-    std::printf("%ld non-finite inputs give another value with the integer stage\n", differences);
-  }
+  if (differences) std::printf("%ld non-finite inputs do not give NaN\n", differences);
   CHECK(differences == 0);
 }
 
@@ -679,6 +732,21 @@ void report_bounds() {
       CHECK(seen >= bound - 5);
     }
     std::printf("\n");
+  }
+  // The wide tier: its limit (2109) is beyond the largest width a finite
+  // input can have (2098), so its bounds are not approached as closely; the
+  // widest inputs there are must still come within 5 bits of the bound for
+  // THEIR width.
+  std::printf("wide tier (%d limbs per difference), at the largest width %d: seen / bound\n",
+              stage::wide_tier, stage::max_finite_width);
+  for (int kind = 0; kind < stage::NUM_KINDS; kind++) {
+    const int bound =
+        stage::magnitude_bits(static_cast<stage::Kind>(kind), stage::max_finite_width);
+    const int seen = stage::observed_bits[kind][stage::num_tiers + 1];
+    std::printf("%-14s %6d / %6d\n", KIND_NAME[kind], seen, bound);
+    CHECK(seen <= bound);
+    CHECK(seen >= bound - 5);
+    CHECK(bound + 1 <= 64 * stage::limbs_of(static_cast<stage::Kind>(kind), stage::wide_tier));
   }
 }
 #endif

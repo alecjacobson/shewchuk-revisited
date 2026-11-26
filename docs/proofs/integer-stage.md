@@ -1,9 +1,11 @@
 # Proof: the exact integer stage
 
 Code: [`src/integer_stage.h`](../../src/integer_stage.h). Hook:
-`*_after_filter()` and `orient2dadapt()` in
-[`src/predicates.cpp`](../../src/predicates.cpp). Ledger:
-[`docs/exactness.md`](../exactness.md).
+`*_after_filter()`, `*_guard_failed()`, `orient2dadapt()` and
+`orient2d_outside_window()` in [`src/predicates.cpp`](../../src/predicates.cpp).
+Ledger: [`docs/exactness.md`](../exactness.md). When the stage is asked, and
+why that makes the predicates exact for every finite input:
+[input-domain.md](input-domain.md).
 
 ## 1. Claim
 
@@ -11,10 +13,14 @@ For each of `orient2d`, `orient3d`, `incircle`, `insphere`, the function of
 that name in `shewchuk::detail::integer_stage` returns, for **any** input
 coordinates (any bit patterns),
 
-- `refused`, if a coordinate is an infinity or a NaN, or if the width `W` of
-  the coordinates (section 2) exceeds 189; or
+- `not_finite`, if a coordinate is an infinity or a NaN;
+- `refused`, only if the coordinates are inside the floating-point domain
+  (section 7) and, unless the caller asked for `prefer_floating_point`, their
+  width `W` (section 2) exceeds 189;
 - otherwise the exact sign (-1, 0, +1) of the predicate's determinant, with
-  the sign convention of the public functions.
+  the sign convention of the public functions. In particular it never refuses
+  a finite input outside the floating-point domain, whatever its width, and
+  never refuses when the caller asked for `always_exact`.
 
 It never returns a sign that is not the exact one, it has no undefined
 behavior, and it does not depend on the floating-point environment (it
@@ -24,8 +30,8 @@ exponent domain of the 1996 predicates, whenever it does not refuse.
 
 The claim is about the stage, not about the whole predicate: the stage runs
 only on calls the floating-point stages before it do not decide (stage A;
-for `orient2d` stages A, B and C), and those are unchanged, with their 1996
-domain (section 9).
+for `orient2d` stages A, B and C). That those stages decide only what they
+may is the subject of [input-domain.md](input-domain.md).
 
 There is no error bound to get wrong in this stage. What could make it wrong
 is: a wrong decomposition of a double, a wrong `W`, an intermediate that does
@@ -150,7 +156,9 @@ The last column follows from `M < 2^W` and `12 < 2^4`, `48 < 2^6`,
 two). A value of magnitude `< 2^k` is representable in `k + 1` bits of two's
 complement.
 
-Tier `D` (`D = 1, 2, 3`) stores each kind in `D` limbs per polynomial degree:
+Tier `D` (the fast tiers `D = 1, 2, 3` and the wide tier `D = 33`; the
+argument is the same for every `D >= 1`) stores each kind in `D` limbs per
+polynomial degree:
 `D` for coordinates and differences, `2D` for the degree-2 kinds, `3D`, `4D`,
 `5D` for degrees 3, 4, 5 (`limbs_of` in the code). It accepts
 `W <= 64 D - 3`. Taking, for each degree `j`, the kind with the largest `k`:
@@ -172,20 +180,20 @@ the largest `INSPHERE_DET` 5 bits below its bound.)
 Per predicate and tier, bits needed (magnitude plus sign) at the tier's
 widest `W` against bits available:
 
-| predicate | intermediate | tier 1, `W = 61` | tier 2, `W = 125` | tier 3, `W = 189` |
-|---|---|--:|--:|--:|
-| all | scaled coordinates | 62 / 64 | 126 / 128 | 190 / 192 |
-| all | differences | 63 / 64 | 127 / 128 | 191 / 192 |
-| all | products of two differences | 125 / 128 | 253 / 256 | 381 / 384 |
-| all | 2×2 minors; the `orient2d` determinant | 126 / 128 | 254 / 256 | 382 / 384 |
-| `incircle` | lifted terms `x² + y²` | 126 / 128 | 254 / 256 | 382 / 384 |
-| `insphere` | lifted terms `x² + y² + z²` | 127 / 128 | 255 / 256 | 383 / 384 |
-| `orient3d`, `insphere` | difference × 2×2 minor | 188 / 192 | 380 / 384 | 572 / 576 |
-| `orient3d`, `insphere` | 3×3 minors; the `orient3d` determinant and its partial sum | 190 / 192 | 382 / 384 | 574 / 576 |
-| `incircle` | lift × 2×2 minor | 251 / 256 | 507 / 512 | 763 / 768 |
-| `incircle` | the determinant and its partial sum | 253 / 256 | 509 / 512 | 765 / 768 |
-| `insphere` | lift × 3×3 minor | 316 / 320 | 636 / 640 | 956 / 960 |
-| `insphere` | the determinant and its partial sums | 318 / 320 | 638 / 640 | 958 / 960 |
+| predicate | intermediate | tier 1, `W = 61` | tier 2, `W = 125` | tier 3, `W = 189` | tier 33, `W = 2109` |
+|---|---|--:|--:|--:|--:|
+| all | scaled coordinates | 62 / 64 | 126 / 128 | 190 / 192 | 2110 / 2112 |
+| all | differences | 63 / 64 | 127 / 128 | 191 / 192 | 2111 / 2112 |
+| all | products of two differences | 125 / 128 | 253 / 256 | 381 / 384 | 4221 / 4224 |
+| all | 2×2 minors; the `orient2d` determinant | 126 / 128 | 254 / 256 | 382 / 384 | 4222 / 4224 |
+| `incircle` | lifted terms `x² + y²` | 126 / 128 | 254 / 256 | 382 / 384 | 4222 / 4224 |
+| `insphere` | lifted terms `x² + y² + z²` | 127 / 128 | 255 / 256 | 383 / 384 | 4223 / 4224 |
+| `orient3d`, `insphere` | difference × 2×2 minor | 188 / 192 | 380 / 384 | 572 / 576 | 6332 / 6336 |
+| `orient3d`, `insphere` | 3×3 minors; the `orient3d` determinant and its partial sum | 190 / 192 | 382 / 384 | 574 / 576 | 6334 / 6336 |
+| `incircle` | lift × 2×2 minor | 251 / 256 | 507 / 512 | 763 / 768 | 8443 / 8448 |
+| `incircle` | the determinant and its partial sum | 253 / 256 | 509 / 512 | 765 / 768 | 8445 / 8448 |
+| `insphere` | lift × 3×3 minor | 316 / 320 | 636 / 640 | 956 / 960 | 10556 / 10560 |
+| `insphere` | the determinant and its partial sums | 318 / 320 | 638 / 640 | 958 / 960 | 10558 / 10560 |
 
 This table is generated: `tools/integer_stage_widths.py src/integer_stage.h
 --table`. The script propagates the largest magnitudes above as exact Python
@@ -193,6 +201,12 @@ integers through the expressions, for every `W`, and checks them against
 `magnitude_bits()` and `limbs_of()` parsed from the header (test
 `integer_stage.widths`). The header also checks itself at compile time:
 `static_assert(tier_holds_every_intermediate(D, max_width(D)))` for each tier.
+
+**The wide tier holds every finite input.** For a finite input,
+`1 <= lowest` and `highest <= 2099` (section 2), so `W <= 2098`. The wide
+tier has `D = 33` and accepts `W <= 64 * 33 - 3 = 2109`. (`D = 32` would stop
+at 2045.) Both facts are `static_assert`s in the header and are checked again
+by the script.
 
 ## 4. The multi-limb operations
 
@@ -257,7 +271,7 @@ else 0: the sign of the two's-complement value.
 
 ## 5. Conversion: `coordinate()`
 
-Tier `D` runs only if `W <= 64D - 3`. Take a nonzero coordinate with odd part
+Tier `D` runs only if `W <= 64D - 3` (the wide tier: `W <= 2098 <= 2109`). Take a nonzero coordinate with odd part
 `m < 2^53` and `shift <= W - 1 <= 64D - 4` (section 2), and let
 `bit = shift & 63`, `low_part = m << bit` (modulo `2^64`).
 
@@ -308,27 +322,77 @@ labels each with `is(kind, ...)`), is stored in the limbs section 3 assumes
 and by sections 3 to 5 equals the exact integer it stands for. Hence the
 final value is `det(X)` exactly and `sign()` of it is the claimed sign.
 
-## 7. The stage refuses; it never truncates
+## 7. The stage decides or refuses; it never truncates
 
-The entry functions call `scale()`, then try `W <= 61`, `W <= 125`,
-`W <= 189` in this order and run the first tier whose limit holds; if none
-does they return `refused`. A tier therefore never runs outside the range
-section 3 covers. No function narrows a value: the only width-changing
-operation is `mul`, which widens. `refused` (2) is distinct from every sign.
+Each predicate has two entry functions. Both call `scale()` and return
+`not_finite` if it reports a coordinate that is not finite.
 
-In `predicates.cpp` the stage is called at one place per predicate: for
-`orient3d`, `incircle` and `insphere` when stage A has not certified the sign
-(`*_after_filter()`), for `orient2d` when stage C has not (inside
-`orient2dadapt()`; stages B and C of `orient2d` are cheaper than the integer
-stage). A sign is returned as it is; a refusal leads to the 1996 code
-that would have run at that point, with the arguments it always received.
-Non-finite inputs are refused, so the same floating-point operations run on
-them as before the stage existed (their result is unspecified, as
-documented).
+The first (`SHEWCHUK_INTEGER_STAGE_DECIDE`) is the request
+`exact_or_floating_point`:
 
-The library built without the integer stage
-(`SHEWCHUK_PREDICATES_NO_INTEGER_STAGE`, test only) still returns the 1996
-values bit for bit on the whole corpus (`differential.library_expansion_only`).
+1. the first of `W <= 61`, `W <= 125`, `W <= 189` that holds selects a fast
+   tier, which decides;
+2. else (`W > 189`, `wide_or_refused_<predicate>()`): `refused` if the
+   coordinates are inside the floating-point domain, and the wide tier
+   decides if they are not.
+
+The second takes a `request` (`SHEWCHUK_INTEGER_STAGE_OTHER_REQUESTS`) and
+puts one step in front of the first:
+
+- `prefer_floating_point`: if the coordinates are not all zero and are
+  inside the floating-point domain, `refused`. Otherwise the first function
+  runs, and it cannot refuse: the coordinates are outside the domain, or all
+  zero (`W = 0`, tier 1);
+- `always_exact`: if `W > 189`, the wide tier decides. Otherwise the first
+  function runs, and it cannot refuse: a fast tier holds the coordinates;
+- `exact_or_floating_point`: the first function.
+
+So, under every request: `refused` only inside the floating-point domain;
+under `exact_or_floating_point` only for `W > 189`; never under
+`always_exact`.
+
+A tier therefore never runs outside the range section 3 covers: a fast tier
+only under its own limit, the wide tier at any width a finite input can
+have. No function narrows a value: the only width-changing operation is
+`mul`, which widens. `refused` (2) and `not_finite` (3) are distinct from
+every sign.
+
+**The floating-point domain** is a predicate on the two integers `low` and
+`high` that `scale()` computes (section 2): with `L = low - 1075` the binary
+exponent of the lowest set bit of any coordinate and `H = high - 1076` the
+binary exponent of the largest magnitude,
+
+    H <= 201   and   degree * L >= -914
+
+(`in_floating_point_domain()`; `degree` is 2, 3, 4, 5). `high - 1076` is that
+exponent because every magnitude is below `2^(high - 1075)` and one of them
+is at least `2^(high - 1076)`. The integer arithmetic is on values below
+`2^21` in magnitude times at most 5. What the domain means, that the
+floating-point stages are valid inside it, is proved in
+[input-domain.md](input-domain.md), section 5; for this stage it is only the
+rule that says when a refusal is allowed. If all coordinates are zero, `low`
+and `high` have no meaning; `prefer_floating_point` excludes that case and tier 1 decides it
+(`W = 0`), so the domain is never asked about it.
+
+In `predicates.cpp` the stage is called
+- when stage A of `orient3d`, `incircle` or `insphere` has not certified the
+  sign (`*_after_filter()`), with the default request; a refusal leads to the
+  adaptive stages of 1996, with the arguments they always received;
+- when stage A has certified the sign but its guard does not hold
+  (`*_guard_failed()`), with `prefer_floating_point`; a refusal means that
+  stage A was valid, and its value is returned;
+- for `orient2d`, before stage D (inside `orient2dadapt()`, default request;
+  a refusal leads to stage D), when the error bound of its first test is
+  outside its window (`orient2d_outside_window()`, `prefer_floating_point`;
+  a refusal leads to the 1996 code as it is), and when stage B's estimate is
+  not finite (`orient2d_exact()`, `always_exact`).
+
+`not_finite` makes every caller return a NaN.
+
+The library built without the integer stage and without the input-domain
+guard (`SHEWCHUK_PREDICATES_NO_INTEGER_STAGE`, test only) still returns the
+1996 values bit for bit on the whole corpus
+(`differential.library_expansion_only`).
 
 ## 8. Undefined behavior audit
 
@@ -356,13 +420,11 @@ that way on every platform.
 
 ## 9. What is not claimed
 
-- The stage sits behind stage A (for `orient2d`: behind stage C). A call
-  that an earlier stage decides never reaches it, and those stages' guarantee
-  is the 1996 one, including its exponent domain (ledger, assumption 3).
-  Making out-of-domain inputs exact by routing them here is a separate change
-  (issue #33).
-- Nothing is claimed about speed here; see the pull request and
-  `docs/benchmarking.md`.
+- Nothing about the stages in front of this one; see
+  [input-domain.md](input-domain.md).
+- Nothing is claimed about speed here; see the pull requests and
+  `docs/benchmarking.md`. The wide tier is slow: schoolbook multiplication of
+  integers of up to 10560 bits.
 
 ## 10. Return value
 
@@ -381,12 +443,16 @@ would see it (`docs/testing.md`):
   on every operation of every test, that no addition or subtraction overflows
   and that every intermediate obeys its bound from section 3, and reports
   how close the largest values came to the bounds;
-- inputs built to maximize every intermediate, at `W` exactly at each tier
-  limit and one past it, anywhere in the exponent range of a double;
+- inputs built to maximize every intermediate, at `W` exactly at each fast
+  tier's limit and one past it, anywhere in the exponent range of a double,
+  and for the wide tier up to the largest width a finite input has (2098),
+  where the largest values come within 5 bits of the bound for that width;
 - a negative control: a tier forced onto inputs 5 bits too wide returns wrong
   signs and trips the checks;
 - the scaling is compared with an independent decomposition (`frexp`) on
-  zeros, subnormals, the extremes of the format and random bit patterns;
+  zeros, subnormals, the extremes of the format and random bit patterns, and
+  the tier and the refusals with an independent statement of the
+  floating-point domain (`tests/width.h`), under each of the three requests;
 - the limb operations are compared with the oracle's big integers, in all
   three implementations of the primitives where the platform has them
   (the portable one everywhere).

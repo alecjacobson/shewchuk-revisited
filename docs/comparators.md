@@ -174,7 +174,8 @@ appears, going up from 150 and down from -150:
 
 | | `orient2d` | `orient3d` | `incircle` | `insphere` |
 |---|---|---|---|---|
-| this library | 511 / -538 | 342 / -359 | 255 / -269 | 204 / -215 |
+| this library | none / none | none / none | none / none | none / none |
+| the 1996 code (`reference`) | 511 / -538 | 340 / -359 | 255 / -269 | 204 / -215 |
 | `indirect` | 511 / -538 | 341 / -359 | none up to 1023 / -270 | 222 / -215 |
 | `geogram` (every second T) | 512 / -538 | 342 / -360 | **170 / -180** | 204 / -216 |
 | `cgal` (every fifth T) | none / none | none / none | none / none | none / none |
@@ -182,9 +183,13 @@ appears, going up from 150 and down from -150:
 
 The 1996 domain corresponds to T <= 201 and T >= -194. Two things stand out:
 
-- **CGAL had no wrong result anywhere in the sweep**, up to the largest and
-  down to the smallest doubles. It is the only one of the five, this library
-  included, that showed no exponent limit.
+- **This library and CGAL had no wrong result anywhere in the sweep**, up to
+  the largest and down to the smallest doubles. For this library that is the
+  contract, proved in [proofs/input-domain.md](proofs/input-domain.md) and
+  tested far beyond this sweep (`library.input_domain`): the exact sign for
+  every finite input. Before it had its input-domain guard it had the limits
+  of the 1996 code, whose floating-point stages it uses. For CGAL it is an
+  observation on this sample.
 - **Geogram's `in_circle_2d_SOS` returns wrong signs inside the 1996
   domain**, for coordinates of magnitude 2^170 and above (exact at 2^168)
   and for coordinates whose lowest set bit is 2^-180 or below (exact at
@@ -200,7 +205,7 @@ The 1996 domain corresponds to T <= 201 and T >= -194. Two things stand out:
   incircle 0x1.e9f3db6dd845cp+170 0x1.6dff5e5e1e554p+170  0x1.e9ac65e39eb1p+167 0x1.7c9c388772f98p+170  -0x1.bbcae50862e2p+169 0x1.f8171bdc2adfp+169  -0x1.8eabe31701058p+168 -0x1.c03c7c2e15d1ap+170
   ```
 
-Outside its limits this library returns NaN or an infinity when an
+Outside its limits the 1996 code returns NaN or an infinity when an
 intermediate overflows (never a finite wrong sign on this sample) and a
 silently wrong sign when one underflows; Indirect_Predicates, Geogram and
 GeometricPredicates return silently wrong signs in both directions.

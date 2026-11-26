@@ -236,6 +236,40 @@ branchy code a change of code layout alone moves the result by up to about
 The tool's own check: comparing a revision with itself must report no
 difference on every workload.
 
+## What limits the first filters
+
+Measured on the Apple M4 while the input-domain guard was designed
+(`src/filter_guard.h`); worth knowing before touching a first filter.
+
+- The first filters are limited by two things at once: the four
+  floating-point units, and the number of instructions the core takes in per
+  cycle (about 8 here, loop of the harness included). `orient3d` and
+  `incircle` sit on the first limit, `orient2d` on the second, `insphere` on
+  both.
+- So **one more floating-point operation in a first filter costs a quarter of
+  a cycle**: 2.3% of `orient3d` for one extra comparison. A move from a
+  floating-point register to an integer register counts as one, a store and
+  an integer load do not.
+- **Integer operations are free up to a budget** that differs per predicate:
+  about 25 for `orient3d` and `incircle`, about 5 for `orient2d`, 45 to 60
+  for `insphere`. Beyond it each costs about an eighth of a cycle. The guard
+  of `orient3d` (4 coordinates) and of `incircle` (8) fits; testing the 15
+  coordinates of `insphere` does not (+7% to +11%), which is why its guard
+  reads the four lifted coordinates instead, and why it still costs 1% to 3%.
+- Compilers turn a chain of integer comparisons of bit patterns into vector
+  code, and move bits over from the floating-point registers that already
+  hold the coordinates: both put the work back on the floating-point units
+  (+23% on `orient3d`). The macros `SHEWCHUK_GUARD_FORGET_ORIGIN`,
+  `SHEWCHUK_GUARD_KEEP_IN_INTEGER_REGISTER` and
+  `SHEWCHUK_GUARD_THROUGH_MEMORY` exist to prevent that. They change code
+  generation only.
+- A branch that depends on the end of the floating-point chain and is taken
+  rarely costs 30 to 70 cycles when it is mispredicted, not the 14 of the
+  pipeline: everything fetched behind it in the meantime is thrown away. That
+  is the cost of `orient2d`'s branch for two zero products
+  (`mix_grid`, `degenerate_lattice`), which the 1996 code returns without a
+  branch of its own.
+
 ## The baseline
 
 `bench/results/` holds the canonical measurement of the pristine reference

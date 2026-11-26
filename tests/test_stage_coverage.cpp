@@ -24,6 +24,19 @@
 // gate requires enough of those for each of them: the fall-through path must
 // stay covered.
 //
+// The corpus is inside the exponent range of the 1996 paper, so the library's
+// input-domain guard (src/filter_guard.h) must never be in its way: the gate
+// also requires, for every single case, that
+//   * a case the reference decides in its first test (A0, A) is decided by
+//     the library's first test with its guard holding, without a detour
+//     through the domain check. Two exceptions, both with the reference's
+//     value: orient2d with two zero products, which leaves by a branch of
+//     its own; and insphere when every coordinate is below 2^-120 in
+//     magnitude, where the error bound is below the guard's floor (2^-683)
+//     and the first filter's value is returned after the domain check
+//     ("rechecked");
+//   * the wide tier of the integer stage decides none.
+//
 // Also checks that the stage-recording build returns exactly the values of
 // the build it instruments (the pristine reference, or the shipped library),
 // i.e. that the instrumentation is behavior-neutral.
@@ -36,6 +49,7 @@
 #include "generators.h"
 #include "implementations.h"
 #include "stages.h"
+#include "test_hooks.h"
 #include "width.h"
 
 using namespace shewchuk_test;
@@ -83,6 +97,7 @@ int main(int argc, char** argv) {
   long totals[NUM_PREDS][NUM_LIBRARY_STAGES] = {};
   long cases[NUM_PREDS] = {};
   long unrecorded = 0, value_differences = 0, stage_differences = 0;
+  long path_differences = 0, zero_product_cases = 0, rechecked_cases = 0;
 
   std::printf("Share of cases decided by each stage of the %s, in percent (tier %s)\n", subject,
               tier->name);
@@ -105,9 +120,41 @@ int main(int argc, char** argv) {
     int stage = -1;
     double staged_value;
     if (library) {
+      shewchuk_hooked_last_path = -1;
+      shewchuk_hooked_last_integer_tier = -1;
       staged_value = staged_library_call(generator.pred, c, &stage);
+      const int path = shewchuk_hooked_last_path;
       int reference_stage = -1;
       staged_reference_call(generator.pred, c, &reference_stage);
+      // The path the library must take (see the top).
+      bool expected_path;
+      if (reference_stage == STAGE_A0 || reference_stage == STAGE_A) {
+        expected_path = path == SHEWCHUK_PATH_LEAF;
+        if (generator.pred == ORIENT2D && reference_stage == STAGE_A0 &&
+            path == SHEWCHUK_PATH_ZERO_PRODUCTS) {
+          expected_path = staged_value == 0.0;
+          zero_product_cases++;
+        }
+        if (generator.pred == INSPHERE && path == SHEWCHUK_PATH_RECHECKED) {
+          expected_path = extent_of(c, NUM_COORDS[INSPHERE]).highest <= -120;
+          rechecked_cases++;
+        }
+      } else if (generator.pred == ORIENT2D) {
+        expected_path = path == SHEWCHUK_PATH_LEAF;
+      } else {
+        expected_path = path == SHEWCHUK_PATH_AFTER;
+      }
+      if (stage == STAGE_I && shewchuk_hooked_last_integer_tier == INTEGER_STAGE_WIDE_TIER) {
+        expected_path = false;
+      }
+      if (!in_floating_point_domain(generator.pred, c)) expected_path = false;
+      if (!expected_path) {
+        if (path_differences < 5) {
+          std::printf("WRONG PATH in %s: path %d, stage %d, reference stage %d\n",
+                      generator.name.c_str(), path, stage, reference_stage);
+        }
+        path_differences++;
+      }
       // The stage the library must decide this case in (see the top).
       const int width = width_of(c, NUM_COORDS[generator.pred]);
       const bool narrow = width >= 0 && width <= INTEGER_STAGE_MAX_WIDTH;
@@ -184,5 +231,14 @@ int main(int argc, char** argv) {
                 stage_differences);
   }
   CHECK(stage_differences == 0);
+  if (library) {
+    std::printf("%ld cases took a path the input-domain guard must not send a corpus case on "
+                "(%ld orient2d cases with two zero products left by their own branch; %ld tiny "
+                "insphere cases were rechecked)\n",
+                path_differences, zero_product_cases, rechecked_cases);
+    // The recheck must stay the rare exception it is on in-range input.
+    CHECK(rechecked_cases * 1000 < cases[INSPHERE]);
+  }
+  CHECK(path_differences == 0);
   return finish("stage coverage");
 }

@@ -29,15 +29,35 @@
 //   * orient2dadapt(), orient3dadapt() and incircleadapt() are never inlined
 //     into the predicates that call them (SHEWCHUK_NOINLINE, see its comment).
 //
-// One thing is new and not from 1996: the exact integer stage
-// (integer_stage.h). For orient3d, incircle and insphere it is tried when the
-// first filter (stage A) cannot certify the sign, before the adaptive stages
-// B, C and D (the *_after_filter() functions); for orient2d, whose stages B
-// and C are cheaper than it, it is tried before stage D (in
-// orient2dadapt()). It returns only a sign, so a call it decides
-// returns -1.0, 0.0 or +1.0. Compiled with
-// SHEWCHUK_PREDICATES_NO_INTEGER_STAGE (test only) the stage is left out and
-// every returned value is the 1996 code's, bit for bit.
+// Two things are new and not from 1996.
+//
+// The exact integer stage (integer_stage.h). For orient3d, incircle and
+// insphere it is tried when the first filter (stage A) cannot certify the
+// sign, before the adaptive stages B, C and D (the *_after_filter()
+// functions); for orient2d, whose stages B and C are cheaper than it, it is
+// tried before stage D (in orient2dadapt()). It returns only a sign, so a
+// call it decides returns -1.0, 0.0 or +1.0.
+//
+// The input-domain guard (filter_guard.h, docs/proofs/input-domain.md). The
+// 1996 analysis assumes that no operation overflows or underflows, and the
+// 1996 code returns wrong signs, silently, where one does. Here a
+// floating-point stage is used only where that cannot have happened:
+//   * the first filter's result is returned only if its guard holds, a
+//     comparison of bit patterns that proves that the determinant estimate
+//     and the error bound are what they would be with an unbounded exponent
+//     range;
+//   * the stages behind it run only on inputs inside a proven exponent
+//     domain (integer_stage.h, in_floating_point_domain()); for orient2d,
+//     stages B and C run under a guard of their own;
+//   * every other finite input is decided by the integer stage, whose wide
+//     tier holds any finite double.
+// So the sign is exact for every finite input. A coordinate that is not
+// finite gives NaN. For inputs inside the range the 1996 paper states, the
+// stages take the decisions they took before, with the same values.
+//
+// Compiled with SHEWCHUK_PREDICATES_NO_INTEGER_STAGE (test only) both are
+// left out and every returned value is the 1996 code's, bit for bit, on every
+// input: that build is the negative control of the input-domain tests.
 //
 // EXACTNESS DEPENDS ON HOW THIS FILE IS COMPILED. The algorithms need every
 // operation to be one correctly rounded IEEE 754 binary64 operation, exactly
@@ -65,7 +85,13 @@
 
 #include <cmath>
 
+#ifdef SHEWCHUK_PREDICATES_TEST_HOOKS
+// Test-only build: the integer stage records the tier that decides a call.
+#define SHEWCHUK_INTEGER_STAGE_TEST_HOOKS
+#endif
+
 #include "constants.h"
+#include "filter_guard.h"
 #include "integer_stage.h"
 
 #ifdef SHEWCHUK_PREDICATES_TEST_HOOKS
@@ -77,10 +103,19 @@
 #define shewchuk_incircle shewchuk_hooked_incircle
 #define shewchuk_insphere shewchuk_hooked_insphere
 int shewchuk_hooked_last_stage = -1;
+int shewchuk_hooked_last_path = -1;
+int shewchuk_hooked_last_integer_tier = -1;
 #define SHEWCHUK_STAGE_HIT(stage) (shewchuk_hooked_last_stage = (stage))
+#define SHEWCHUK_PATH_HIT(path) (shewchuk_hooked_last_path = (path))
+// The integer stage decided: record the stage and the tier.
+#define SHEWCHUK_INTEGER_STAGE_HIT()                 \
+  (shewchuk_hooked_last_stage = SHEWCHUK_STAGE_I,    \
+   shewchuk_hooked_last_integer_tier = shewchuk::detail::integer_stage::last_tier)
 #else
 #include "shewchuk/predicates.h"
 #define SHEWCHUK_STAGE_HIT(stage) ((void)0)
+#define SHEWCHUK_PATH_HIT(path) ((void)0)
+#define SHEWCHUK_INTEGER_STAGE_HIT() ((void)0)
 #endif
 
 // The first filter of a predicate decides almost every call, so it should be
@@ -120,6 +155,59 @@ using shewchuk::detail::o3derrboundB;
 using shewchuk::detail::o3derrboundC;
 using shewchuk::detail::resulterrbound;
 using shewchuk::detail::splitter;
+
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+namespace guard = shewchuk::detail::guard;
+namespace integer_stage = shewchuk::detail::integer_stage;
+
+// What every predicate returns if a coordinate is an infinity or a NaN: a
+// quiet NaN. (Made from its bits: std::numeric_limits would add symbols to an
+// unoptimized library.)
+inline double not_a_number() noexcept
+{
+  const guard::bits64 bits = 0x7ff8000000000000ull;
+  double value;
+  std::memcpy(&value, &bits, sizeof value);
+  return value;
+}
+
+// The domain of the floating-point stages admits coordinates whose lowest set
+// bit is as low as 2^(floating_point_min_grid / degree). Its proof
+// (docs/proofs/input-domain.md, section 5) needs every product of an
+// error-bound constant and a value on the grid 2^floating_point_min_grid to be
+// a multiple of the smallest subnormal number, i.e. every constant to be a
+// multiple of 2^-error_constant_grid.
+constexpr bool is_integer_below_2_to_112(double x) noexcept
+{
+  // x = high * 2^60 + low with high an integer below 2^52; x is an integer
+  // exactly if low is one. Both conversions are in range and exact.
+  const double high = static_cast<double>(static_cast<long long>(x * 0x1p-60));
+  const double low = x - high * 0x1p60;
+  return x >= 0.0 && x < 0x1p112 && low == static_cast<double>(static_cast<long long>(low));
+}
+constexpr bool on_error_constant_grid(double constant) noexcept
+{
+  // 2^160, written as a product because the grid is a named constant.
+  static_assert(shewchuk::detail::integer_stage::error_constant_grid == 160);
+  return is_integer_below_2_to_112(constant * 0x1p160);
+}
+static_assert(on_error_constant_grid(resulterrbound));
+static_assert(on_error_constant_grid(ccwerrboundA) && on_error_constant_grid(ccwerrboundB) &&
+              on_error_constant_grid(ccwerrboundC));
+static_assert(on_error_constant_grid(o3derrboundA) && on_error_constant_grid(o3derrboundB) &&
+              on_error_constant_grid(o3derrboundC));
+static_assert(on_error_constant_grid(iccerrboundA) && on_error_constant_grid(iccerrboundB) &&
+              on_error_constant_grid(iccerrboundC));
+static_assert(on_error_constant_grid(isperrboundA) && on_error_constant_grid(isperrboundB) &&
+              on_error_constant_grid(isperrboundC));
+// The check has teeth: a constant with a bit below the grid fails it.
+static_assert(!on_error_constant_grid(isperrboundC * 0x1p-12));
+// The guards rely on every first-filter constant being below 2^-48, so that
+// errbound <= permanent / 2^48 (and, for orient2d, detsum >= 2^51 errbound).
+static_assert(ccwerrboundA < 0x1p-51 && o3derrboundA < 0x1p-48 && iccerrboundA < 0x1p-48 &&
+              isperrboundA < 0x1p-48);
+static_assert(ccwerrboundC > 0x1p-104);
+#endif
 
 // ---------------------------------------------------------------------------
 // The arithmetic macros of predicates.c (lines 145-306), unchanged except for
@@ -372,7 +460,32 @@ double estimate(int elen, const double *e)
 // orient2d
 // ---------------------------------------------------------------------------
 
-/* predicates.c lines 1535-1617: orient2dadapt() */
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+// The exact sign of orient2d from the integer stage alone, for the calls on
+// which no floating-point stage may be used. Never refuses a finite input.
+SHEWCHUK_NOINLINE double orient2d_exact(const double *pa, const double *pb, const double *pc)
+{
+  const int sign = integer_stage::orient2d(pa, pb, pc, integer_stage::Request::always_exact);
+  if (sign == integer_stage::not_finite) {
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+    return not_a_number();
+  }
+  SHEWCHUK_INTEGER_STAGE_HIT();
+  return sign;
+}
+#endif
+
+/* predicates.c lines 1535-1617: orient2dadapt()
+ *
+ * Not from 1996 (docs/proofs/input-domain.md, section 4): this function is
+ * entered only with finite coordinates and either inside the floating-point
+ * domain or with the error bound of the first filter inside the window of
+ * shewchuk_orient2d(). In the second case the two products are far from the
+ * subnormal range, so stage B is exact unless Split overflows on a huge
+ * difference, which makes its estimate a NaN: that is tested for, and the
+ * integer stage then decides. Stage C is covered by the same window. Stage D
+ * runs only inside the floating-point domain (the integer stage in front of
+ * it refuses nothing else). */
 SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const double *pc,
                      double detsum)
 {
@@ -412,10 +525,27 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
 
   det = estimate(4, B);
   errbound = ccwerrboundB * detsum;
+#ifdef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
   if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
     return det;
   }
+#else
+  {
+    // fabs(det) >= errbound as a comparison of bit patterns (errbound is
+    // finite and not negative here), which also sees a det that is not
+    // finite. The coordinates are copied for the reason given below.
+    const guard::bits64 magnitude = guard::bits_of(det) & guard::magnitude_mask;
+    if (magnitude >= guard::infinity_bits) {
+      const double a[2] = {pa[0], pa[1]}, b[2] = {pb[0], pb[1]}, c2[2] = {pc[0], pc[1]};
+      return orient2d_exact(a, b, c2);
+    }
+    if (magnitude >= guard::bits_of(errbound)) {
+      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
+      return det;
+    }
+  }
+#endif
 
   Two_Diff_Tail(pa[0], pc[0], acx, acxtail);
   Two_Diff_Tail(pb[0], pc[0], bcx, bcxtail);
@@ -439,8 +569,9 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
   // Not from 1996: the exact integer stage (integer_stage.h), tried before
   // stage D. For orient2d it is here and not directly behind stage A as for
   // the other predicates: stages B and C of orient2d cost less than the
-  // integer stage, stage D costs more. If it declines (coordinates too wide
-  // for its tiers, or not finite), stage D runs as in 1996.
+  // integer stage, stage D costs more. It refuses only coordinates that are
+  // too wide for its fast tiers and inside the floating-point domain: then
+  // stage D runs as in 1996.
   //
   // The stage gets a copy of the coordinates, not pa, pb and pc: if those
   // pointers were passed on, the compiler could no longer hand the six
@@ -450,9 +581,13 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
 #ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
   {
     const double a[2] = {pa[0], pa[1]}, b[2] = {pb[0], pb[1]}, c2[2] = {pc[0], pc[1]};
-    const int sign = shewchuk::detail::integer_stage::orient2d(a, b, c2);
-    if (sign != shewchuk::detail::integer_stage::refused) {
-      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+    const int sign = integer_stage::orient2d(a, b, c2);
+    if (sign == integer_stage::not_finite) {
+      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+      return not_a_number();
+    }
+    if (sign != integer_stage::refused) {
+      SHEWCHUK_INTEGER_STAGE_HIT();
       return sign;
     }
   }
@@ -480,6 +615,47 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
   return(D[Dlength - 1]);
 }
 
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+// orient2d when the error bound of its first test is outside the window of
+// shewchuk_orient2d() and the two products are not zeros with a zero factor
+// each: the error bound is tiny, huge, infinite or NaN, or a product
+// underflowed to zero. Rare, and not reached from inside the range the 1996
+// paper states. Recomputes what the first test computed.
+SHEWCHUK_NOINLINE double orient2d_outside_window(const double *pa, const double *pb,
+                                                 const double *pc)
+{
+  const double acx = pa[0] - pc[0], bcy = pb[1] - pc[1];
+  const double acy = pa[1] - pc[1], bcx = pb[0] - pc[0];
+  const double detleft = acx * bcy, detright = acy * bcx;
+  const double det = detleft - detright;
+  const double detsum = std::fabs(detleft) + std::fabs(detright);
+
+  SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_AFTER);
+  const int sign =
+      integer_stage::orient2d(pa, pb, pc, integer_stage::Request::prefer_floating_point);
+  if (sign == integer_stage::not_finite) {
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+    return not_a_number();
+  }
+  if (sign != integer_stage::refused) {
+    SHEWCHUK_INTEGER_STAGE_HIT();
+    return sign;
+  }
+
+  // Inside the floating-point domain no operation of the 1996 code overflows
+  // or underflows: its first test and what follows it, as they are.
+  if (std::fabs(det) >= ccwerrboundA * detsum) {
+    SHEWCHUK_STAGE_HIT(((detleft > 0.0) && (detright > 0.0)) ||
+                       ((detleft < 0.0) && (detright < 0.0))
+                           ? SHEWCHUK_STAGE_A
+                           : SHEWCHUK_STAGE_A0);
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_RECHECKED);
+    return det;
+  }
+  return orient2dadapt(pa, pb, pc, detsum);
+}
+#endif
+
 }  // namespace
 
 /* predicates.c lines 1619-1653: orient2d().
@@ -496,19 +672,36 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
  *     |detleft| + |detright|, so fabs(det) == detsum bit for bit, and
  *     detsum >= ccwerrboundA * detsum always holds; det is returned, as in
  *     1996.
- * Keep `>=` (with `>`, two zero products would fall through to
- * orient2dadapt) and keep the two products separately rounded. */
+ * Keep `>=` and keep the two products separately rounded.
+ *
+ * Not from 1996: the window on the error bound (filter_guard.h,
+ * docs/proofs/input-domain.md, section 4). The test above is trusted, and
+ * orient2dadapt() is entered, only if
+ *   2^orient2d_floor_exponent <= errbound < 2^orient2d_ceiling_exponent;
+ * then no product was rounded in the subnormal range in a way that matters
+ * and nothing overflowed. Everything else goes to orient2d_outside_window().
+ * The window and the test itself compare bit patterns as integers; for a
+ * finite, nonnegative errbound and a finite det that is the floating-point
+ * comparison fabs(det) >= errbound, and the window makes both finite. Inside
+ * the range of the 1996 paper the error bound is in the window unless both
+ * products are zero. */
 double shewchuk_orient2d(const double *pa, const double *pb, const double *pc)
 {
+  double acx, acy, bcx, bcy;
   double detleft, detright, det;
   double detsum, errbound;
 
-  detleft = (pa[0] - pc[0]) * (pb[1] - pc[1]);
-  detright = (pa[1] - pc[1]) * (pb[0] - pc[0]);
+  acx = pa[0] - pc[0];
+  bcy = pb[1] - pc[1];
+  acy = pa[1] - pc[1];
+  bcx = pb[0] - pc[0];
+  detleft = acx * bcy;
+  detright = acy * bcx;
   det = detleft - detright;
 
   detsum = std::fabs(detleft) + std::fabs(detright);
   errbound = ccwerrboundA * detsum;
+#ifdef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
   if (std::fabs(det) >= errbound) {
     // Test-only build: report the stage the 1996 code decides this call in.
     SHEWCHUK_STAGE_HIT(((detleft > 0.0) && (detright > 0.0)) ||
@@ -519,6 +712,39 @@ double shewchuk_orient2d(const double *pa, const double *pb, const double *pc)
   }
 
   return orient2dadapt(pa, pb, pc, detsum);
+#else
+  const guard::bits64 bound = guard::bits_of(errbound);
+  const guard::bits64 floor_bits = guard::power_of_two_bits(guard::orient2d_floor_exponent);
+  const guard::bits64 ceiling_bits = guard::power_of_two_bits(guard::orient2d_ceiling_exponent);
+  // floor <= errbound < ceiling, as one unsigned comparison. A NaN and a
+  // negative zero have bit patterns above the ceiling's.
+  if (bound - floor_bits < ceiling_bits - floor_bits) {
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_LEAF);
+    if ((guard::bits_of(det) & guard::magnitude_mask) >= bound) {
+      // Test-only build: report the stage the 1996 code decides this call in.
+      SHEWCHUK_STAGE_HIT(((detleft > 0.0) && (detright > 0.0)) ||
+                         ((detleft < 0.0) && (detright < 0.0))
+                             ? SHEWCHUK_STAGE_A
+                             : SHEWCHUK_STAGE_A0);
+      return det;
+    }
+    return orient2dadapt(pa, pb, pc, detsum);
+  }
+  // Outside the window. The one case that ordinary input reaches (points on
+  // an axis-parallel line, repeated points): errbound is +0, so both products
+  // are zeros (not NaNs), and each has a factor that is zero. A rounded
+  // difference of two doubles is zero only if they are equal, so the
+  // determinant is zero, and det, a zero, is returned as in 1996. Products of
+  // nonzero differences that underflowed to zero do not pass. (One test
+  // without short-circuit evaluation: which factor is the zero one changes
+  // from call to call, and four branches would be mispredicted.)
+  if ((bound == 0) & ((acx == 0.0) | (bcy == 0.0)) & ((acy == 0.0) | (bcx == 0.0))) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A0);
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_ZERO_PRODUCTS);
+    return det;
+  }
+  return orient2d_outside_window(pa, pb, pc);
+#endif
 }
 
 namespace {
@@ -934,22 +1160,56 @@ SHEWCHUK_NOINLINE double orient3dadapt(const double *pa, const double *pb, const
 }
 
 // What runs when stage A cannot certify the sign: the exact integer stage
-// (integer_stage.h), and behind it (coordinates too wide for its tiers, or
-// not finite) the adaptive stages of 1996, unchanged. Out of line, so that
-// stage A stays a small leaf function.
+// (integer_stage.h), and behind it the adaptive stages of 1996, unchanged.
+// Not from 1996: the integer stage decides every input that fits its fast
+// tiers AND every input outside the floating-point domain; it refuses, and
+// the adaptive stages run, only inside that domain, where no operation of
+// theirs overflows or underflows (docs/proofs/input-domain.md, section 5).
+// Out of line, so that stage A stays a small leaf function.
 SHEWCHUK_NOINLINE
 double orient3d_after_filter(const double *pa, const double *pb, const double *pc,
                              const double *pd, double permanent)
 {
 #ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
-  const int sign = shewchuk::detail::integer_stage::orient3d(pa, pb, pc, pd);
-  if (sign != shewchuk::detail::integer_stage::refused) {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+  SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_AFTER);
+  const int sign = integer_stage::orient3d(pa, pb, pc, pd);
+  if (sign != integer_stage::refused) {
+    if (sign == integer_stage::not_finite) {
+      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+      return not_a_number();
+    }
+    SHEWCHUK_INTEGER_STAGE_HIT();
     return sign;
   }
 #endif
   return orient3dadapt(pa, pb, pc, pd, permanent);
 }
+
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+// What runs when stage A certifies det but its guard does not hold (rare;
+// never inlined, so that stage A does not pay for it). Inside the
+// floating-point domain no operation of stage A overflowed or underflowed,
+// so det is returned after all, as in 1996. Outside, the integer stage
+// decides.
+SHEWCHUK_NOINLINE double orient3d_guard_failed(const double *pa, const double *pb, const double *pc,
+                                               const double *pd, double det)
+{
+  SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_AFTER);
+  const int sign =
+      integer_stage::orient3d(pa, pb, pc, pd, integer_stage::Request::prefer_floating_point);
+  if (sign == integer_stage::refused) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_RECHECKED);
+    return det;
+  }
+  if (sign == integer_stage::not_finite) {
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+    return not_a_number();
+  }
+  SHEWCHUK_INTEGER_STAGE_HIT();
+  return sign;
+}
+#endif
 
 }  // namespace
 
@@ -989,10 +1249,35 @@ double shewchuk_orient3d(const double *pa, const double *pb, const double *pc,
             + (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz)
             + (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
   errbound = o3derrboundA * permanent;
+#ifdef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
   if (std::fabs(det) > errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
     return det;
   }
+#else
+  // Not from 1996: fabs(det) > errbound is tested on the bit patterns, and
+  // det is returned only if, in addition, the guard of the filter holds
+  // (filter_guard.h): then det, permanent and errbound are what an unbounded
+  // exponent range would give, and the 1996 analysis applies. The guard reads
+  // bit patterns and compares integers; coordinates are read from memory.
+  if (guard::filter_certifies(det, errbound)) {
+    const double *qa = pa, *qb = pb, *qc = pc, *qd = pd;
+    SHEWCHUK_GUARD_FORGET_ORIGIN(qa);
+    SHEWCHUK_GUARD_FORGET_ORIGIN(qb);
+    SHEWCHUK_GUARD_FORGET_ORIGIN(qc);
+    SHEWCHUK_GUARD_FORGET_ORIGIN(qd);
+    // The z coordinates: only the z differences multiply a value that may
+    // have been rounded in the subnormal range.
+    if (guard::holds(guard::orient3d_guard, errbound, guard::bits_at(qa, 2),
+                     guard::bits_at(qb, 2), guard::bits_at(qc, 2), guard::bits_at(qd, 2)))
+        [[likely]] {
+      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
+      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_LEAF);
+      return det;
+    }
+    return orient3d_guard_failed(pa, pb, pc, pd, det);
+  }
+#endif
 
   return orient3d_after_filter(pa, pb, pc, pd, permanent);
 }
@@ -1581,22 +1866,56 @@ SHEWCHUK_NOINLINE double incircleadapt(const double *pa, const double *pb, const
 }
 
 // What runs when stage A cannot certify the sign: the exact integer stage
-// (integer_stage.h), and behind it (coordinates too wide for its tiers, or
-// not finite) the adaptive stages of 1996, unchanged. Out of line, so that
-// stage A stays a small leaf function.
+// (integer_stage.h), and behind it the adaptive stages of 1996, unchanged.
+// Not from 1996: the integer stage decides every input that fits its fast
+// tiers AND every input outside the floating-point domain; it refuses, and
+// the adaptive stages run, only inside that domain, where no operation of
+// theirs overflows or underflows (docs/proofs/input-domain.md, section 5).
+// Out of line, so that stage A stays a small leaf function.
 SHEWCHUK_NOINLINE
 double incircle_after_filter(const double *pa, const double *pb, const double *pc,
                              const double *pd, double permanent)
 {
 #ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
-  const int sign = shewchuk::detail::integer_stage::incircle(pa, pb, pc, pd);
-  if (sign != shewchuk::detail::integer_stage::refused) {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+  SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_AFTER);
+  const int sign = integer_stage::incircle(pa, pb, pc, pd);
+  if (sign != integer_stage::refused) {
+    if (sign == integer_stage::not_finite) {
+      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+      return not_a_number();
+    }
+    SHEWCHUK_INTEGER_STAGE_HIT();
     return sign;
   }
 #endif
   return incircleadapt(pa, pb, pc, pd, permanent);
 }
+
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+// What runs when stage A certifies det but its guard does not hold (rare;
+// never inlined, so that stage A does not pay for it). Inside the
+// floating-point domain no operation of stage A overflowed or underflowed,
+// so det is returned after all, as in 1996. Outside, the integer stage
+// decides.
+SHEWCHUK_NOINLINE double incircle_guard_failed(const double *pa, const double *pb, const double *pc,
+                                               const double *pd, double det)
+{
+  SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_AFTER);
+  const int sign =
+      integer_stage::incircle(pa, pb, pc, pd, integer_stage::Request::prefer_floating_point);
+  if (sign == integer_stage::refused) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_RECHECKED);
+    return det;
+  }
+  if (sign == integer_stage::not_finite) {
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+    return not_a_number();
+  }
+  SHEWCHUK_INTEGER_STAGE_HIT();
+  return sign;
+}
+#endif
 
 }  // namespace
 
@@ -1637,10 +1956,34 @@ double shewchuk_incircle(const double *pa, const double *pb, const double *pc,
             + (std::fabs(cdxady) + std::fabs(adxcdy)) * blift
             + (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
   errbound = iccerrboundA * permanent;
+#ifdef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
   if (std::fabs(det) > errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
     return det;
   }
+#else
+  // Not from 1996: fabs(det) > errbound is tested on the bit patterns, and
+  // det is returned only if, in addition, the guard of the filter holds
+  // (filter_guard.h): then det, permanent and errbound are what an unbounded
+  // exponent range would give, and the 1996 analysis applies. The guard reads
+  // bit patterns and compares integers; coordinates are read from memory.
+  if (guard::filter_certifies(det, errbound)) {
+    const double *qa = pa, *qb = pb, *qc = pc, *qd = pd;
+    SHEWCHUK_GUARD_FORGET_ORIGIN(qa);
+    SHEWCHUK_GUARD_FORGET_ORIGIN(qb);
+    SHEWCHUK_GUARD_FORGET_ORIGIN(qc);
+    SHEWCHUK_GUARD_FORGET_ORIGIN(qd);
+    if (guard::holds(guard::incircle_guard, errbound, guard::bits_at(qa, 0),
+                     guard::bits_at(qa, 1), guard::bits_at(qb, 0), guard::bits_at(qb, 1),
+                     guard::bits_at(qc, 0), guard::bits_at(qc, 1), guard::bits_at(qd, 0),
+                     guard::bits_at(qd, 1))) [[likely]] {
+      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
+      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_LEAF);
+      return det;
+    }
+    return incircle_guard_failed(pa, pb, pc, pd, det);
+  }
+#endif
 
   return incircle_after_filter(pa, pb, pc, pd, permanent);
 }
@@ -2126,21 +2469,56 @@ double insphereadapt(const double *pa, const double *pb, const double *pc,
 }
 
 // What runs when stage A cannot certify the sign: the exact integer stage
-// (integer_stage.h), and behind it (coordinates too wide for its tiers, or
-// not finite) the adaptive stages of 1996, unchanged. Not marked
-// SHEWCHUK_NOINLINE, for the reason insphereadapt() is not (see there).
+// (integer_stage.h), and behind it the adaptive stages of 1996, unchanged.
+// Not from 1996: the integer stage decides every input that fits its fast
+// tiers AND every input outside the floating-point domain; it refuses, and
+// the adaptive stages run, only inside that domain, where no operation of
+// theirs overflows or underflows (docs/proofs/input-domain.md, section 5).
+// Not marked SHEWCHUK_NOINLINE, for the reason insphereadapt() is not (see
+// there).
 double insphere_after_filter(const double *pa, const double *pb, const double *pc,
                              const double *pd, const double *pe, double permanent)
 {
 #ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
-  const int sign = shewchuk::detail::integer_stage::insphere(pa, pb, pc, pd, pe);
-  if (sign != shewchuk::detail::integer_stage::refused) {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+  SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_AFTER);
+  const int sign = integer_stage::insphere(pa, pb, pc, pd, pe);
+  if (sign != integer_stage::refused) {
+    if (sign == integer_stage::not_finite) {
+      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+      return not_a_number();
+    }
+    SHEWCHUK_INTEGER_STAGE_HIT();
     return sign;
   }
 #endif
   return insphereadapt(pa, pb, pc, pd, pe, permanent);
 }
+
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+// What runs when stage A certifies det but its guard does not hold (rare;
+// never inlined, so that stage A does not pay for it). Inside the
+// floating-point domain no operation of stage A overflowed or underflowed,
+// so det is returned after all, as in 1996. Outside, the integer stage
+// decides.
+SHEWCHUK_NOINLINE double insphere_guard_failed(const double *pa, const double *pb, const double *pc,
+                                               const double *pd, const double *pe, double det)
+{
+  SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_AFTER);
+  const int sign =
+      integer_stage::insphere(pa, pb, pc, pd, pe, integer_stage::Request::prefer_floating_point);
+  if (sign == integer_stage::refused) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_RECHECKED);
+    return det;
+  }
+  if (sign == integer_stage::not_finite) {
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+    return not_a_number();
+  }
+  SHEWCHUK_INTEGER_STAGE_HIT();
+  return sign;
+}
+#endif
 
 }  // namespace
 
@@ -2241,10 +2619,38 @@ double shewchuk_insphere(const double *pa, const double *pb, const double *pc,
                + (aexbeyplus + bexaeyplus) * cezplus)
             * dlift;
   errbound = isperrboundA * permanent;
+#ifdef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
   if (std::fabs(det) > errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
     return det;
   }
+#else
+  // Not from 1996: fabs(det) > errbound is tested on the bit patterns, and
+  // det is returned only if, in addition, the guard of the filter holds
+  // (filter_guard.h): then det, permanent and errbound are what an unbounded
+  // exponent range would give, and the 1996 analysis applies. The guard reads
+  // bit patterns and compares integers; coordinates are read from memory.
+  if (guard::filter_certifies(det, errbound)) {
+    // The four lifted coordinates bound all twelve differences, with far
+    // fewer operations than testing the fifteen coordinates. Which form costs
+    // less depends on what the compiler made of the filter (measured, see
+    // docs/benchmarking.md): clang keeps the lifts in vector registers, where
+    // adding them up is cheaper than taking them out one by one; either form
+    // is a set of sums of squares in the sense of holds_for_squares().
+#if defined(__clang__)
+    if (guard::holds_for_squares(guard::insphere_guard, errbound,
+                                 (alift + blift) + (clift + dlift))) [[likely]] {
+#else
+    if (guard::holds_for_squares(guard::insphere_guard, errbound, alift, blift, clift,
+                                 dlift)) [[likely]] {
+#endif
+      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
+      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_LEAF);
+      return det;
+    }
+    return insphere_guard_failed(pa, pb, pc, pd, pe, det);
+  }
+#endif
 
   return insphere_after_filter(pa, pb, pc, pd, pe, permanent);
 }
