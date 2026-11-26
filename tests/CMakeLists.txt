@@ -35,7 +35,11 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
   elseif(target_arch MATCHES "^(x86_64|AMD64|amd64)$")
     # Baseline x86-64 has no fused multiply-add; enable it so that the
     # compiler has something to contract to. Checked at run time.
-    set(contracted_flags -O2 -ffp-contract=fast -mfma)
+    # AVX2 is turned off because clang, when it may use AVX2 (for example
+    # with -march=x86-64-v3 in the user's flags), contracts this file in a
+    # way that changes thousands of returned values but not one sign on the
+    # corpus: such a build would not be a negative control for the sign test.
+    set(contracted_flags -O2 -ffp-contract=fast -mfma -mno-avx2)
   endif()
 endif()
 
@@ -315,6 +319,17 @@ if(contracted_flags)
     "${CMAKE_COMMAND}" "-DOBJECT=$<TARGET_OBJECTS:shewchuk_ref_contracted>" "-DARCH=${target_arch}"
     ${disassembler_args} -DEXPECT_FMA=ON -P "${PROJECT_SOURCE_DIR}/cmake/CheckNoFma.cmake")
   set_tests_properties(negative_control.no_fma PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+endif()
+
+# The library refuses to compile for x87 extended-precision arithmetic
+# (cmake/CheckRefusesX87.cmake). Skipped where the compiler has no such mode.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+  shewchuk_add_test(library.refuses_x87
+    "${CMAKE_COMMAND}" "-DCXX=${CMAKE_CXX_COMPILER}" "-DFLAGS=${CMAKE_CXX_FLAGS}"
+    "-DROOT=${PROJECT_SOURCE_DIR}"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/refuses_x87"
+    -P "${PROJECT_SOURCE_DIR}/cmake/CheckRefusesX87.cmake")
+  set_tests_properties(library.refuses_x87 PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 endif()
 
 if(SHEWCHUK_DEEP_TESTS)

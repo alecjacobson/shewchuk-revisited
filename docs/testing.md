@@ -39,7 +39,7 @@ two extra cross-checks of the oracle.
 | `stages.coverage` | every stage (A0, A, B, Bx, C, D) of every predicate decides at least 2% of its cases; prints the stage table |
 | `differential.reference` | the reference has zero sign mismatches against the oracle, and its value hash equals the recorded one |
 | `differential.reference_staged` | the instrumented build returns bit-identical values |
-| `negative_control.fp_contract` | the same file built with `-O2 -ffp-contract=fast` IS caught returning wrong signs (skipped where the compiler has no such mode) |
+| `negative_control.fp_contract` | the same file built with `-O2 -ffp-contract=fast` IS caught returning wrong signs (skipped where the compiler has no such mode). On x86-64 it is built with `-mfma -mno-avx2`: when clang may use AVX2 its contracted code returns different values but no wrong sign on the corpus, which only the value hash sees |
 | `negative_control.default_flags` | the same file built with `-O2` and no floating-point flag at all IS caught returning wrong signs. GCC only (its GNU dialects imply `-ffp-contract=fast`); skipped for other compilers, whose defaults have not been seen to change a sign. On x86-64 the file is built with `-mfma`, as `-march=x86-64-v3` or `-march=native` would, and the test is skipped on a CPU without FMA |
 
 Tests of the library (`src/predicates.cpp`):
@@ -60,6 +60,7 @@ Tests of the library (`src/predicates.cpp`):
 | `negative_control.lto_fast_math_caller` | the same test IS failed by a library copy built with `-ffp-contract=fast` instead of the strict flags. The criterion is the value hash: with clang this copy returns different values but no wrong sign on the corpus, with GCC it returns wrong signs |
 | `library.no_fma` | the library's object code contains no fused multiply-add and no call to `fma()` (skipped if no disassembler is found or the architecture is not arm64 / x86-64) |
 | `negative_control.no_fma` | that check IS triggered by the contracted reference build |
+| `library.refuses_x87` | compiled for x87 extended-precision arithmetic (the build's flags plus `-mfpmath=387`), `src/predicates.cpp` stops at its `#error` on `FLT_EVAL_METHOD` (skipped where the compiler has no such mode: not x86, or clang on x86-64) |
 
 A skipped test is reported as skipped, never as passed.
 
