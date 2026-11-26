@@ -40,6 +40,7 @@ two extra cross-checks of the oracle.
 | `differential.reference` | the reference has zero sign mismatches against the oracle, and its value hash equals the recorded one |
 | `differential.reference_staged` | the instrumented build returns bit-identical values |
 | `negative_control.fp_contract` | the same file built with `-O2 -ffp-contract=fast` IS caught returning wrong signs (skipped where the compiler has no such mode) |
+| `negative_control.default_flags` | the same file built with `-O2` and no floating-point flag at all IS caught returning wrong signs. GCC only (its GNU dialects imply `-ffp-contract=fast`); skipped for other compilers, whose defaults have not been seen to change a sign. On x86-64 the file is built with `-mfma`, as `-march=x86-64-v3` or `-march=native` would, and the test is skipped on a CPU without FMA |
 
 Tests of the library (`src/predicates.cpp`):
 
@@ -54,6 +55,8 @@ Tests of the library (`src/predicates.cpp`):
 | `library.api`, `library.api_c` | the public headers from C++ and C, including the opt-in 1996 names |
 | `library.threads` | several threads calling the predicates get the single-threaded values |
 | `library.symbols` | the library exports the four `shewchuk_` predicates and nothing else |
+| `library.lto_fast_math_caller` | a caller compiled with `-O3 -ffast-math` (MSVC: `/fp:fast`) and link-time optimization, linked with those flags against a link-time-optimized build of the library that has the same flags in front of the project's strict ones, gets the recorded values bit for bit on the whole corpus (skipped if the toolchain has no link-time optimization, or on an x86-64 CPU without FMA: the test compiles with `-mfma`) |
+| `negative_control.lto_fast_math_caller` | the same test IS failed by a library copy built with `-ffp-contract=fast` instead of the strict flags. The criterion is the value hash: with clang this copy returns different values but no wrong sign on the corpus, with GCC it returns wrong signs |
 | `library.no_fma` | the library's object code contains no fused multiply-add and no call to `fma()` (skipped if no disassembler is found or the architecture is not arm64 / x86-64) |
 | `negative_control.no_fma` | that check IS triggered by the contracted reference build |
 
