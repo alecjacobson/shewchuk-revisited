@@ -63,6 +63,9 @@ def aggregate(name, samples, runs, metric):
         "runs": runs,
         "runs_valid": len(valid),
         "checksum": first["checksum"],
+        # False only for a comparator whose signs differ from the reference's.
+        "checksum_checked": all(sample.get("checksum_checked", True) for sample in samples),
+        "checksum_ok": all(sample.get("checksum_ok", True) for sample in samples),
         "input_hash": first["input_hash"],
     }
     if valid:
@@ -125,7 +128,9 @@ def main():
 
     benchmarks = [aggregate(name, samples[name], options.runs, metric) for name in order]
 
-    for key in ("date", "command", "implementation", "implementation_description", "load_avg"):
+    # "implementation" and "implementation_description" stay: they are the
+    # measured implementation's (for a comparator: its version and flags).
+    for key in ("date", "command", "load_avg"):
         context.pop(key, None)
     context["date"] = runs[0][1]["context"]["date"]
     context["suite_command"] = "tools/bench_suite.py " + " ".join(sys.argv[1:])

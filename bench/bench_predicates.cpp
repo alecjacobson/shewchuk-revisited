@@ -9,6 +9,13 @@
 // Exit status: 0 measured; 1 checksum mismatch or workload error; 2 usage
 // error; 3 measured, but at least one result is flagged invalid (too many
 // chunks were disturbed by the scheduler); 77 implementation unavailable.
+//
+// A comparator (third-party code, docs/comparators.md) is measured even where
+// its signs are not the reference's: the result then carries
+// "checksum_ok": false, the table says CHECKSUM MISMATCH, and the exit status
+// is not 1. Where a comparator answers a different question by design
+// (symbolic perturbation, another orientation convention) the checksum is not
+// compared at all ("checksum_checked": false).
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
@@ -199,7 +206,7 @@ struct Result {
   long stage_counts[NUM_STAGES] = {};
   long long checksum = 0, reference_checksum = 0;
   std::uint64_t input_hash = 0;
-  bool checksum_ok = true, valid = true;
+  bool checksum_checked = true, checksum_ok = true, valid = true;
 };
 
 struct Settings {
@@ -377,7 +384,10 @@ bool measure(const Settings& settings, const CounterInfo& counters,
   }
   result->valid = static_cast<double>(result->kept_chunks) >=
                   MIN_KEPT_CHUNKS * static_cast<double>(result->chunks.size());
-  result->checksum_ok = !settings.check_checksum || result->checksum == result->reference_checksum;
+  result->checksum_checked =
+      settings.check_checksum && settings.implementation->same_signs_as_reference(pred);
+  result->checksum_ok =
+      !result->checksum_checked || result->checksum == result->reference_checksum;
   return true;
 }
 
@@ -539,8 +549,10 @@ void write_json(std::FILE* out, const Settings& settings, const CounterInfo& cou
     std::fprintf(out, "      \"chunk_cv_percent\": %.4f,\n", result.chunk_cv_percent);
     if (result.pcore_share >= 0) std::fprintf(out, "      \"pcore_share\": %.6f,\n", result.pcore_share);
     std::fprintf(out, "      \"checksum\": %lld,\n      \"reference_checksum\": %lld,\n"
-                      "      \"checksum_ok\": %s,\n      \"valid\": %s,\n",
-                 result.checksum, result.reference_checksum, result.checksum_ok ? "true" : "false",
+                      "      \"checksum_checked\": %s,\n      \"checksum_ok\": %s,\n"
+                      "      \"valid\": %s,\n",
+                 result.checksum, result.reference_checksum,
+                 result.checksum_checked ? "true" : "false", result.checksum_ok ? "true" : "false",
                  result.valid ? "true" : "false");
     std::fprintf(out, "      \"input_hash\": \"%016" PRIx64 "\",\n", result.input_hash);
     // Raw per-chunk totals, for paired comparisons between two runs.
@@ -731,7 +743,12 @@ int main(int argc, char** argv) {
                    result.reference_checksum);
     }
   }
-  if (!all_checksums) return EXIT_CHECKSUM;
+  if (!all_checksums) {
+    if (!settings.implementation->comparator) return EXIT_CHECKSUM;
+    std::fprintf(stderr, "'%s' is a comparator: measured anyway, and the mismatch is recorded "
+                         "in the result\n",
+                 settings.implementation->name);
+  }
   if (!all_valid) {
     std::fprintf(stderr,
                  "INVALID: at least one result kept fewer than %.0f%% of its chunks (the process was "

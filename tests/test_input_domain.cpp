@@ -14,12 +14,18 @@
 //   * the lowest set bit of any of its coordinates is 2^T (lower sweep),
 // and the library's sign is compared with the exact oracle's.
 //
-//   test_input_domain          run the checks
-//   test_input_domain --sweep  print the number of wrong results per T
+//   test_input_domain               run the checks
+//   test_input_domain --sweep       print the number of wrong results per T
+//   test_input_domain --sweep NAME [STEP]
+//                                   the same for another implementation of the
+//                                   table, for example a comparator; only every
+//                                   STEP-th T (some comparators take
+//                                   milliseconds per call out there)
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <vector>
@@ -27,6 +33,7 @@
 #include "check.h"
 #include "generators.h"
 #include "implementations.h"
+#include "judge.h"
 #include "oracle.h"
 
 using namespace shewchuk_test;
@@ -97,6 +104,9 @@ struct Outcome {
   long wrong_sign = 0;  // finite result with the wrong sign
   long not_finite = 0;  // NaN or infinity
   long wrong() const { return wrong_sign + not_finite; }
+  // The first case with a wrong result, as called, and what was returned.
+  double first_wrong[MAX_COORDS] = {};
+  double first_wrong_value = 0;
 };
 
 // Rescales every case of `pred` by 2^shift(case) and compares with the oracle.
@@ -112,10 +122,16 @@ Outcome run_scaled(const Implementation& library, const std::vector<Case>& cases
     double scaled[MAX_COORDS];
     for (int i = 0; i < NUM_COORDS[pred]; i++) scaled[i] = std::scalbn(one.coords[i], k);
     const double value = library.call(pred, scaled);
+    const Verdict verdict = judge(library, pred, scaled, value, oracle_sign(pred, scaled)).verdict;
+    if (verdict == Verdict::UNDEFINED || verdict == Verdict::OUTSIDE_PRECONDITION) continue;
     outcome.cases++;
+    if (verdict == Verdict::WRONG && outcome.wrong() == 0) {
+      std::copy(scaled, scaled + NUM_COORDS[pred], outcome.first_wrong);
+      outcome.first_wrong_value = value;
+    }
     if (!std::isfinite(value)) {
       outcome.not_finite++;
-    } else if (sign_of(value) != oracle_sign(pred, scaled)) {
+    } else if (verdict == Verdict::WRONG) {
       outcome.wrong_sign++;
     }
   }
@@ -139,23 +155,37 @@ void report(Pred pred, const char* what, int t, const Outcome& o) {
               what, t, o.cases, o.wrong_sign, o.not_finite);
 }
 
-void print_sweep(const Implementation& library, const std::vector<Case>& cases) {
+// Prints, once per direction, the first wrong result of a sweep as a
+// reproducer: the coordinates as hexadecimal floats.
+void print_first_wrong(Pred pred, const Outcome& o, bool* printed) {
+  if (*printed || o.wrong() == 0) return;
+  *printed = true;
+  std::printf("    first wrong result: returned %a, exact sign %d, for %s", o.first_wrong_value,
+              oracle_sign(pred, o.first_wrong), PRED_NAME[pred]);
+  for (int i = 0; i < NUM_COORDS[pred]; i++) std::printf(" %a", o.first_wrong[i]);
+  std::printf("\n");
+}
+
+void print_sweep(const Implementation& library, const std::vector<Case>& cases, int step) {
   for (int p = 0; p < NUM_PREDS; p++) {
     const Pred pred = static_cast<Pred>(p);
+    bool printed_upper = false, printed_lower = false;
     std::printf("%s, largest coordinate exponent T: cases, wrong sign, not finite\n",
                 PRED_NAME[p]);
-    for (int t = 150; t <= 1023; t++) {
+    for (int t = 150; t <= 1023; t += step) {
       const Outcome o = run_upper(library, cases, pred, t);
       if (o.wrong() || t % 50 == 0) {
         std::printf("  T=%5d %6ld %6ld %6ld\n", t, o.cases, o.wrong_sign, o.not_finite);
       }
+      print_first_wrong(pred, o, &printed_upper);
     }
     std::printf("%s, lowest set bit exponent T: cases, wrong sign, not finite\n", PRED_NAME[p]);
-    for (int t = -150; t >= -1074; t--) {
+    for (int t = -150; t >= -1074; t -= step) {
       const Outcome o = run_lower(library, cases, pred, t);
       if (o.wrong() || t % 50 == 0) {
         std::printf("  T=%5d %6ld %6ld %6ld\n", t, o.cases, o.wrong_sign, o.not_finite);
       }
+      print_first_wrong(pred, o, &printed_lower);
     }
   }
 }
@@ -175,8 +205,14 @@ int main(int argc, char** argv) {
   const Implementation& floating_point_only = *find_implementation("library_expansion_only");
   const std::vector<Case> cases = collect_cases();
 
-  if (argc == 2 && std::strcmp(argv[1], "--sweep") == 0) {
-    print_sweep(library, cases);
+  if (argc >= 2 && std::strcmp(argv[1], "--sweep") == 0) {
+    const Implementation* swept = argc >= 3 ? find_implementation(argv[2]) : &library;
+    if (!swept || swept->unavailable_reason()) {
+      std::printf("implementation '%s' is unknown or unavailable\n", argv[2]);
+      return 2;
+    }
+    const int step = argc >= 4 ? std::max(1, std::atoi(argv[3])) : 1;
+    print_sweep(*swept, cases, step);
     return 0;
   }
   for (int p = 0; p < NUM_PREDS; p++) {

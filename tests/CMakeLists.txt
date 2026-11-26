@@ -79,6 +79,9 @@ target_link_libraries(shewchuk_test_support PUBLIC
   shewchuk_ref shewchuk_ref_staged shewchuk_predicates shewchuk_predicates_hooked
   shewchuk_predicates_expansion_only shewchuk_predicates_portable
   shewchuk_strict_fp shewchuk_sanitize)
+if(TARGET shewchuk_comparators)
+  target_link_libraries(shewchuk_test_support PRIVATE shewchuk_comparators)
+endif()
 if(MSVC)
   target_compile_options(shewchuk_test_support PUBLIC /W3)
 else()
@@ -323,6 +326,28 @@ shewchuk_add_test(differential.library_hooked
   differential --impl library_hooked --tier quick --check-golden --integer-stage)
 shewchuk_add_test(differential.library_portable
   differential --impl library_portable --tier quick --check-golden --integer-stage)
+
+# --- Comparators (third-party code, docs/comparators.md)
+# Every wrapper against the exact oracle on the whole quick corpus: this is
+# what shows that its argument order and sign convention were adapted
+# correctly. A comparator recorded as returning wrong signs is run with
+# --known-wrong: the test prints them and fails if they disappear or if any
+# appears on uniform random input.
+if(GMP_FOUND)
+  # About 50 microseconds per insphere call: a tenth of the quick corpus.
+  shewchuk_add_test(comparator.gmp_rational
+    differential --impl gmp_rational --cases-per-generator 1000 --comparator)
+endif()
+foreach(name geogram cgal indirect)
+  if(TARGET shewchuk_comparator_${name})
+    shewchuk_add_test(comparator.${name}
+      differential --impl ${name} --tier quick --check-golden --comparator)
+  endif()
+endforeach()
+if(TARGET shewchuk_comparator_lenthe)
+  shewchuk_add_test(comparator.lenthe
+    differential --impl lenthe --tier quick --check-golden --comparator --known-wrong)
+endif()
 
 # The integer stage on its own; see test_integer_stage.cpp.
 shewchuk_add_test(integer_stage.unit test_integer_stage quick)

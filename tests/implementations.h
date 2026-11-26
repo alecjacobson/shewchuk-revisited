@@ -21,6 +21,30 @@ struct Implementation {
   // Null if the implementation can run here; otherwise the reason it cannot
   // (not built for this compiler, or the CPU lacks a required feature).
   const char* (*unavailable_reason)();
+  // True for third-party code that is measured as a comparator
+  // (docs/comparators.md). The drivers report a comparator's wrong signs
+  // without treating them as a failure of this project.
+  bool comparator = false;
+  // Per predicate: true if the implementation, by design, never reports a
+  // degenerate input: it breaks the tie with a symbolic perturbation and
+  // returns a nonzero sign where the exact sign is zero.
+  bool perturbs_zero[NUM_PREDS] = {false, false, false, false};
+  // Per predicate (incircle, insphere): true if the implementation answers
+  // "is the last point inside the circle or sphere through the others",
+  // whatever the orientation of the others. That is the 1996 sign multiplied
+  // by the sign of orient2d or orient3d of the other points, and undefined
+  // when those are collinear or coplanar.
+  bool unoriented[NUM_PREDS] = {false, false, false, false};
+  // Per predicate (incircle, insphere): nonzero if the implementation has a
+  // precondition on the other points: their orient2d or orient3d, in the 1996
+  // convention, must have this sign. Its answers on other inputs mean nothing
+  // and are not checked.
+  int required_base_orientation[NUM_PREDS] = {0, 0, 0, 0};
+  // True if the benchmark's sign checksum can be compared with the
+  // reference's for this predicate.
+  bool same_signs_as_reference(Pred pred) const {
+    return !perturbs_zero[pred] && !unoriented[pred] && required_base_orientation[pred] == 0;
+  }
 
   // Calls the predicate `pred` on a flat coordinate array.
   double call(Pred pred, const double* c) const {
