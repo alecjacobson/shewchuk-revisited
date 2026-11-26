@@ -45,6 +45,45 @@ jobs:
         if: always()
         run: ctest --test-dir build -R "^bench[.]" --verbose
 
+  # Other x86 targets, Release only.
+  #   x86-64-v3: FMA is available to the whole build, so the disassembly gate
+  #     (library.no_fma) and the value hashes show that nothing was contracted.
+  #   i386 sse2: 32-bit x86 with SSE2 arithmetic. No GMP (the distribution's
+  #     is 64-bit): oracle.gmp_crosscheck reports itself as skipped.
+  # x87 arithmetic is not supported: library.refuses_x87 (in every GCC leg)
+  # checks that the library does not compile for it.
+  linux-targets:
+    name: linux ${{ matrix.target.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - {name: gcc x86-64-v3, cc: gcc, cxx: g++, flags: "-march=x86-64-v3", packages: libgmp-dev, gmp: "ON"}
+          - {name: clang x86-64-v3, cc: clang, cxx: clang++, flags: "-march=x86-64-v3", packages: libgmp-dev, gmp: "ON"}
+          - {name: gcc i386 sse2, cc: gcc, cxx: g++, flags: "-m32 -msse2 -mfpmath=sse", packages: gcc-multilib g++-multilib, gmp: "OFF"}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install packages
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.target.packages }}
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_C_COMPILER=${{ matrix.target.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.target.cxx }}
+          "-DCMAKE_C_FLAGS=${{ matrix.target.flags }}"
+          "-DCMAKE_CXX_FLAGS=${{ matrix.target.flags }}"
+          -DCMAKE_BUILD_TYPE=Release
+          -DSHEWCHUK_REQUIRE_GMP=${{ matrix.target.gmp }}
+          -DCMAKE_DISABLE_FIND_PACKAGE_GMP=${{ matrix.target.gmp == 'ON' && 'OFF' || 'ON' }}
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 4
+      - name: Stage tables, hashes, constants and negative controls
+        if: always()
+        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|differential.library|library.stages|library.no_fma|negative_control.no_fma|library.constants|library.refuses_x87)$" --verbose
+
   # The library and the tests under sanitizers. The pristine reference is not
   # instrumented (cmake/Sanitizers.cmake): it has a known one-past-the-end
   # read, which the library must not have.
@@ -96,15 +135,28 @@ jobs:
         if: always()
         run: ctest --test-dir build -R "^bench[.]" --verbose
 
+  # /fp:precise is what the project sets on its own targets. With /fp:strict
+  # in the user's flags the project uses /fp:strict instead
+  # (cmake/StrictFloatingPoint.cmake).
   windows:
-    name: windows msvc Release
+    name: windows msvc ${{ matrix.fp }} Release
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fp: ["/fp:precise", "/fp:strict"]
+    env:
+      CFLAGS: ${{ matrix.fp }}
+      CXXFLAGS: ${{ matrix.fp }}
     steps:
       - uses: actions/checkout@v4
       # No GMP here: oracle.gmp_crosscheck reports itself as skipped. MSVC has
       # no -ffp-contract=fast, so negative_control.fp_contract is skipped too.
       - name: Configure
         run: cmake -S . -B build
+      - name: Floating-point model of the library
+        shell: bash
+        run: grep -o "fp:[a-z]*\|<FloatingPointModel>[A-Za-z]*" build/src/shewchuk_predicates.vcxproj | sort | uniq -c
       - name: Build
         run: cmake --build build --config Release -j 4
       - name: Test

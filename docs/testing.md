@@ -56,6 +56,7 @@ Tests of the library (`src/predicates.cpp`):
 | `library.symbols` | the library exports the four `shewchuk_` predicates and nothing else |
 | `library.no_fma` | the library's object code contains no fused multiply-add and no call to `fma()` (skipped if no disassembler is found or the architecture is not arm64 / x86-64) |
 | `negative_control.no_fma` | that check IS triggered by the contracted reference build |
+| `library.refuses_x87` | compiled for x87 extended-precision arithmetic (the build's flags plus `-mfpmath=387`), `src/predicates.cpp` stops at its `#error` on `FLT_EVAL_METHOD` (skipped where the compiler has no such mode: not x86, or clang on x86-64) |
 
 A skipped test is reported as skipped, never as passed.
 

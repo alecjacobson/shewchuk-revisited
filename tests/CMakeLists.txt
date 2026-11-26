@@ -205,6 +205,17 @@ if(contracted_flags)
   set_tests_properties(negative_control.no_fma PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
 endif()
 
+# The library refuses to compile for x87 extended-precision arithmetic
+# (cmake/CheckRefusesX87.cmake). Skipped where the compiler has no such mode.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
+  shewchuk_add_test(library.refuses_x87
+    "${CMAKE_COMMAND}" "-DCXX=${CMAKE_CXX_COMPILER}" "-DFLAGS=${CMAKE_CXX_FLAGS}"
+    "-DROOT=${PROJECT_SOURCE_DIR}"
+    "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/refuses_x87"
+    -P "${PROJECT_SOURCE_DIR}/cmake/CheckRefusesX87.cmake")
+  set_tests_properties(library.refuses_x87 PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:")
+endif()
+
 if(SHEWCHUK_DEEP_TESTS)
   shewchuk_add_test(deep.library.stages test_stage_coverage deep library)
   shewchuk_add_test(deep.library.expansions test_expansions 60000)

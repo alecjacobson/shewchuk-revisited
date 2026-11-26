@@ -11,9 +11,16 @@
 # -fno-fast-math     Undo -ffast-math / -Ofast. Listed first because clang
 #                    resets the contraction mode when it sees this flag.
 # /fp:precise        MSVC: value-safe model, no contraction.
+# /fp:strict         MSVC: /fp:precise plus floating-point environment access.
+#                    Used instead of /fp:precise if the user's flags ask for
+#                    it, so that this target never weakens the user's model.
 add_library(shewchuk_strict_fp INTERFACE)
 if(MSVC)
-  target_compile_options(shewchuk_strict_fp INTERFACE /fp:precise)
+  if("${CMAKE_C_FLAGS} ${CMAKE_CXX_FLAGS}" MATCHES "[-/]fp:strict")
+    target_compile_options(shewchuk_strict_fp INTERFACE /fp:strict)
+  else()
+    target_compile_options(shewchuk_strict_fp INTERFACE /fp:precise)
+  endif()
 elseif(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(shewchuk_strict_fp INTERFACE -fno-fast-math -ffp-contract=off)
 else()
