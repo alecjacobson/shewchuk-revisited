@@ -71,6 +71,15 @@ its slow exact stages; "hardest cases" need its last stage.
 | `insphere` | 70.8 → 32.5 (**2.2x**) | 235 → 38.4 (**6.1x**) | 4,814 → 190 (**25.3x**) | 32,372 → 718 (**45.1x**) |
 <!-- performance-table:end -->
 
+Against other exact implementations (CGAL 6.2.1 `EPICK`, Geogram PCK,
+Indirect_Predicates, GeometricPredicates), measured the same way
+([docs/comparators.md](docs/comparators.md)): this library is the fastest on
+mixtures of random and near-degenerate points and on the hardest cases, by 6x
+to 10x on the hardest `orient3d`, `incircle` and `insphere` inputs. It is not
+the fastest everywhere: on random points Indirect_Predicates' `orient2d` is
+about 20% faster with Apple clang (level with GCC), and when coordinates span
+very different magnitudes CGAL's `incircle` is about 5x faster.
+
 Both implementations return the exact sign on every input tested (over 15
 million cases checked against exact arithmetic). The numbers are medians over
 10 fresh processes and are regenerated from
