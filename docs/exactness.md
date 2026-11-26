@@ -25,9 +25,38 @@ Every claim holds only if all of these do.
 |---|---|---|
 | 1 | `double` is IEEE 754 binary64, and every `+ - *` is one correctly rounded operation in round-to-nearest, ties-to-even. The rounding mode is never changed by the caller. | `#error` / `static_assert` on the format and on `FLT_EVAL_METHOD`. The rounding mode is the caller's responsibility. Fast-Expansion-Sum specifically needs ties-to-even (paper, section 2.4). |
 | 2 | Operations are evaluated as written: no contraction into fused multiply-add, no reassociation, no extended precision. | The translation unit is compiled with flags set by the project (`cmake/StrictFloatingPoint.cmake`), plus `#error` on fast-math macros. Checked after the build by `library.no_fma` (no fused multiply-add in the object code) and by the value hash. |
-| 3 | No intermediate result overflows or underflows. The paper does not analyse overflow or underflow; it states that the four predicates neither overflow nor underflow for inputs whose exponents are in [-142, 201]. | Not checked at run time. The test corpus stays inside this domain. Behaviour outside it is not claimed (issue #5). |
+| 3 | No intermediate result overflows or underflows. The paper does not analyse overflow or underflow; it states that the four predicates neither overflow nor underflow for inputs whose exponents are in [-142, 201]. | Not checked at run time. The test corpus stays inside this domain. Behaviour outside it is not claimed; see [Input domain](#input-domain). |
 | 4 | Gradual underflow is on (no flush-to-zero, no denormals-are-zero mode), so that `x - y == 0` only if `x == y`. Inside the domain of assumption 3 no subnormal number should arise at all; this assumption is what keeps the first sign tests meaningful at the edge. | The caller's responsibility; not checked. |
 | 5 | Inputs are finite. | Not checked; NaN and infinities give unspecified results. |
+
+### Callers' flags and link-time optimization
+
+Assumption 2 is about the library's translation unit only. Code that calls
+the library may be compiled with any flags, including `-Ofast` /
+`-ffast-math`, and the whole program may be link-time optimized (`-flto`,
+`CMAKE_INTERPROCEDURAL_OPTIMIZATION`, MSVC `/GL`), with those flags on the
+link line. This rests on how the compilers record floating-point semantics,
+not on anything the library does:
+
+- GCC stores the optimization options of each function in its link-time
+  representation and compiles each function with its own.
+- clang records the permission to contract or reassociate on each
+  floating-point instruction, so library code that is inlined into a
+  fast-math caller keeps its strict semantics.
+
+Observed on arm64 with GCC 16, LLVM 22 and Apple clang (thin and full LTO):
+clang inlines `shewchuk_orient2d` into the fast-math caller, GCC keeps every
+library function out of line, and in both cases the linked executable has no
+fused multiply-add in any code that came from the library.
+
+Tested by `library.lto_fast_math_caller`, with a negative control
+(see [testing.md](testing.md)). What is not covered: options that change code
+generation for the whole link regardless of how each translation unit was
+compiled (for example passing `-fp-contract=fast` to the LLVM back end
+through the linker), and compiling `src/predicates.cpp` outside the project's
+build system without the flags of `cmake/StrictFloatingPoint.cmake`. A
+program linked with `-ffast-math` may also start with flush-to-zero enabled
+(GCC links `crtfastmath.o` on some targets), which is assumption 4.
 
 ## Building blocks
 
@@ -194,6 +223,59 @@ only `detright` is NaN both versions call `orient2dadapt`.
 Tests: `library.stages` requires, for every corpus case the reference decides
 in A0, that the library's single test decides it; `library.orient2d_first_test`
 compares values and stages on special products.
+
+## Input domain
+
+**Supported.** Every coordinate is zero or has a binary exponent in
+[-142, 201], that is a magnitude in [2^-142, 2^202). This is the range the
+paper states. Results outside it are not promised, and nothing checks at run
+time that an input is inside it.
+
+**Why that range suffices (a sketch, not a proof).** Let d be the degree of
+the determinant in the coordinates: 2 for orient2d, 3 for orient3d, 4 for
+incircle, 5 for insphere.
+
+- *Overflow.* Coordinates are below 2^202, differences below 2^203, a product
+  of d differences below 2^(203d), at most 2^1015 for insphere. The
+  determinant and the `permanent` of the filters are sums of at most 72 such
+  products, below 2^1022. The largest operand that `Split` multiplies by
+  2^27 + 1 has degree d - 1. So nothing reaches 2^1024.
+- *Underflow.* Let 2^L be the lowest set bit of any coordinate; in the
+  supported range L >= -142 - 52 = -194. Every coordinate difference, rounded
+  or exact, and every tail is a multiple of 2^L, and every product of j of
+  them is a multiple of 2^(jL), j <= d. As long as dL >= -1074 all of these
+  are multiples of the smallest subnormal number, so rounding one of them
+  never loses anything to underflow: each `+ - *` returns what it would
+  return with an unbounded exponent range, which is what the paper's
+  analysis assumes. In the supported range dL >= -970.
+
+**Observed limits.** `library.input_domain` rescales a slice of the corpus by
+powers of two (exact, and sign-preserving) and compares with the oracle. On
+that sample every result is exact as long as
+
+| | orient2d | orient3d | incircle | insphere |
+|---|---|---|---|---|
+| binary exponent of the largest coordinate is at most | 510 | 339 | 254 | 203 |
+| lowest set bit of every coordinate is at least 2^L, L = | -537 | -358 | -268 | -214 |
+
+and the first failures appear one step further. The lower row is exactly
+-floor(1074 / d), the condition of the sketch; the upper row is about
+1024 / d. These are observations on a sample. Only the range above is
+supported.
+
+**Current behaviour outside the domain** (recorded by the same test so that a
+change is noticed; not a contract):
+
+| Input | What the library returns today |
+|---|---|
+| too large (an intermediate product overflows) | NaN; orient2d can also return an infinity, which had the exact sign on the sample. Every result that was still finite had the exact sign |
+| too small (a roundoff term underflows) | a finite value whose sign can be wrong, with nothing to signal it: zero for a nonzero determinant, or nonzero for a zero determinant. An opposite nonzero sign was not observed |
+| a NaN coordinate | NaN |
+| an infinite coordinate | NaN; orient2d can also return an infinity |
+
+A caller that maps the result to a sign with `(x > 0) - (x < 0)` turns a NaN
+into 0, "degenerate". Inputs that may be outside the domain must be checked
+by the caller.
 
 ## What is and is not established
 

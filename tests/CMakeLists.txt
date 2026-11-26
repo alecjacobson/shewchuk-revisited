@@ -76,6 +76,34 @@ else()
   target_compile_definitions(shewchuk_test_support PRIVATE SHEWCHUK_HAVE_CONTRACTED_REFERENCE=0)
 endif()
 
+# --- Negative control: the pristine file with the compiler's default flags
+# Plain `gcc -O2`: no floating-point flag at all. GCC's GNU dialects (the
+# default, and what predicates.c needs) imply -ffp-contract=fast. Clang's
+# default (-ffp-contract=on) contracts only within one expression; that changes
+# returned values but has not been seen to change a sign, so there is no such
+# control for clang.
+set(default_flags "")
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  if(target_arch MATCHES "^(aarch64|arm64|ARM64)$")
+    set(default_flags -O2)
+  elseif(target_arch MATCHES "^(x86_64|AMD64|amd64)$")
+    # As above: baseline x86-64 has no fused multiply-add (-march=x86-64-v3
+    # and -march=native usually do). Checked at run time.
+    set(default_flags -O2 -mfma)
+  endif()
+endif()
+if(default_flags)
+  shewchuk_add_reference(shewchuk_ref_default_flags shewchuk_default_flags_)
+  target_compile_options(shewchuk_ref_default_flags PRIVATE ${default_flags})
+  target_link_libraries(shewchuk_test_support PUBLIC shewchuk_ref_default_flags)
+  target_compile_definitions(shewchuk_test_support PRIVATE SHEWCHUK_HAVE_DEFAULT_FLAGS_REFERENCE=1)
+else()
+  # The test is still registered and reports itself as skipped.
+  message(STATUS "The default-flags negative control is not available for "
+    "${CMAKE_C_COMPILER_ID} on ${target_arch}: negative_control.default_flags will be skipped")
+  target_compile_definitions(shewchuk_test_support PRIVATE SHEWCHUK_HAVE_DEFAULT_FLAGS_REFERENCE=0)
+endif()
+
 find_package(GMP)
 if(GMP_FOUND)
   target_link_libraries(shewchuk_test_support PRIVATE GMP::GMP)
@@ -89,7 +117,8 @@ endif()
 
 # --- Test executables
 foreach(name test_oracle test_oracle_gmp test_stage_coverage differential
-    test_constants test_expansions test_threads test_orient2d_first_test)
+    test_constants test_expansions test_threads test_orient2d_first_test
+    test_input_domain)
   add_executable(${name} ${name}.cpp)
   target_link_libraries(${name} PRIVATE shewchuk_test_support)
   if(MSVC)
@@ -107,6 +136,81 @@ target_link_libraries(test_api PRIVATE shewchuk::predicates shewchuk_sanitize)
 add_executable(test_api_c test_api_c.c)
 target_link_libraries(test_api_c PRIVATE shewchuk::predicates shewchuk_sanitize)
 set_target_properties(test_api_c PROPERTIES LINKER_LANGUAGE CXX)
+
+# --- A fast-math caller with link-time optimization (test_lto_caller.cpp)
+# Two more builds of the library, each with a caller (lto_caller.cpp) compiled
+# with fast-math flags, all link-time optimized and linked on a link line that
+# carries the fast-math flags too:
+#   exact       what a consumer gets who puts fast-math flags in
+#               CMAKE_CXX_FLAGS and turns on interprocedural optimization: the
+#               consumer's flags first, the project's strict flags last;
+#   contracted  NEGATIVE CONTROL: the strict flags replaced by
+#               -ffp-contract=fast.
+# The predicates are renamed on the command line so that these builds can be
+# linked next to the shipped library.
+add_executable(test_lto_caller test_lto_caller.cpp)
+target_link_libraries(test_lto_caller PRIVATE shewchuk_test_support)
+include(CheckIPOSupported)
+check_ipo_supported(RESULT lto_supported OUTPUT lto_output LANGUAGES CXX)
+if(lto_supported)
+  if(MSVC)
+    set(fast_math_flags /fp:fast)
+    set(lto_target_flags "")
+  else()
+    set(fast_math_flags -O3 -ffast-math)
+    set(lto_target_flags "")
+    if(target_arch MATCHES "^(x86_64|AMD64|amd64)$")
+      # So that the compiler has an instruction to contract to. Checked at run
+      # time.
+      set(lto_target_flags -mfma)
+      target_compile_definitions(test_lto_caller PRIVATE SHEWCHUK_LTO_CALLER_USES_FMA=1)
+    endif()
+    target_link_options(test_lto_caller PRIVATE ${fast_math_flags})
+  endif()
+
+  # shewchuk_add_lto_caller(<tag>): the library and its caller as two
+  # link-time-optimized object libraries, added to test_lto_caller. The caller
+  # is the function shewchuk_lto_caller_<tag>().
+  function(shewchuk_add_lto_caller tag)
+    set(library shewchuk_predicates_lto_${tag})
+    set(caller shewchuk_lto_caller_${tag})
+    add_library(${library} OBJECT "${PROJECT_SOURCE_DIR}/src/predicates.cpp")
+    add_library(${caller} OBJECT lto_caller.cpp)
+    target_compile_definitions(${caller} PRIVATE SHEWCHUK_LTO_CALLER=${caller})
+    target_compile_options(${caller} PRIVATE ${fast_math_flags} ${lto_target_flags})
+    foreach(target ${library} ${caller})
+      foreach(predicate orient2d orient3d incircle insphere)
+        target_compile_definitions(${target} PRIVATE
+          shewchuk_${predicate}=shewchuk_lto_${tag}_${predicate})
+      endforeach()
+      target_include_directories(${target} PRIVATE
+        "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src")
+      set_target_properties(${target} PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
+      target_sources(test_lto_caller PRIVATE $<TARGET_OBJECTS:${target}>)
+    endforeach()
+  endfunction()
+
+  # A target's own options precede those of the interface libraries it links,
+  # so the strict flags come last here, as they do in the shipped library.
+  shewchuk_add_lto_caller(exact)
+  target_compile_options(shewchuk_predicates_lto_exact PRIVATE
+    ${fast_math_flags} ${lto_target_flags})
+  target_link_libraries(shewchuk_predicates_lto_exact PRIVATE shewchuk_strict_fp)
+  set_target_properties(test_lto_caller PROPERTIES INTERPROCEDURAL_OPTIMIZATION ON)
+  target_compile_definitions(test_lto_caller PRIVATE SHEWCHUK_HAVE_LTO_CALLER=1)
+
+  if(contracted_flags)
+    # No fast-math flags on this copy of the library: its #error guards would
+    # reject them. Contraction defines no macro, so nothing rejects that.
+    shewchuk_add_lto_caller(contracted)
+    target_compile_options(shewchuk_predicates_lto_contracted PRIVATE ${contracted_flags})
+    target_compile_definitions(test_lto_caller PRIVATE SHEWCHUK_HAVE_LTO_CALLER_CONTRACTED=1)
+  endif()
+else()
+  # The tests are still registered and report themselves as skipped.
+  message(STATUS "Link-time optimization is not available (${lto_output}): "
+    "library.lto_fast_math_caller will be skipped")
+endif()
 
 # --- Tests
 # Exit status 77 means "skipped", and is reported as such.
@@ -151,6 +255,8 @@ shewchuk_add_test(differential.reference_staged
   differential --impl reference_staged --tier quick --check-golden --require-identical)
 shewchuk_add_test(negative_control.fp_contract
   differential --impl reference_contracted --tier quick --check-golden --expect-mismatch)
+shewchuk_add_test(negative_control.default_flags
+  differential --impl reference_default_flags --tier quick --check-golden --expect-mismatch)
 
 # --- Tests of the library (src/, include/)
 shewchuk_add_test(library.constants test_constants)
@@ -160,12 +266,18 @@ shewchuk_add_test(library.api_c test_api_c)
 shewchuk_add_test(library.threads test_threads)
 shewchuk_add_test(library.stages test_stage_coverage quick library)
 shewchuk_add_test(library.orient2d_first_test test_orient2d_first_test)
+shewchuk_add_test(library.input_domain test_input_domain)
 # The library is declared refactor-only: every value must equal the
 # reference's, and the value hash must equal the recorded one.
 shewchuk_add_test(differential.library
   differential --impl library --tier quick --check-golden --require-identical)
 shewchuk_add_test(differential.library_hooked
   differential --impl library_hooked --tier quick --check-golden --require-identical)
+
+# The caller's flags and link-time optimization do not reach the library's
+# arithmetic; and the test notices when they do.
+shewchuk_add_test(library.lto_fast_math_caller test_lto_caller exact)
+shewchuk_add_test(negative_control.lto_fast_math_caller test_lto_caller contracted)
 
 # The shipped library exports the four predicates and nothing else. (Skipped
 # in sanitizer builds, whose runtime adds symbols of its own.)

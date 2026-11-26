@@ -14,6 +14,9 @@ extern int shewchuk_staged_last_stage;
 #if SHEWCHUK_HAVE_CONTRACTED_REFERENCE
 SHEWCHUK_REF_DECLARE(shewchuk_contracted_)
 #endif
+#if SHEWCHUK_HAVE_DEFAULT_FLAGS_REFERENCE
+SHEWCHUK_REF_DECLARE(shewchuk_default_flags_)
+#endif
 }
 
 namespace shewchuk_test {
@@ -65,16 +68,41 @@ const char* contracted_unavailable_reason() {
   return nullptr;
 }
 #else
-// Placeholders so that the table entry exists and reports why it cannot run.
-double missing_orient2d(const double*, const double*, const double*) { return 0.0; }
-double missing_orient3d(const double*, const double*, const double*, const double*) { return 0.0; }
-double missing_insphere(const double*, const double*, const double*, const double*,
-                        const double*) {
-  return 0.0;
-}
 const char* contracted_unavailable_reason() {
   return "not built: the contraction negative control is only defined for GCC and clang on "
          "x86-64 and arm64";
+}
+#endif
+
+#if SHEWCHUK_HAVE_DEFAULT_FLAGS_REFERENCE
+SHEWCHUK_TEST_ADAPTERS(default_flags, shewchuk_default_flags_)
+
+const char* default_flags_unavailable_reason() {
+#if defined(__x86_64__) || defined(__i386__)
+  // Built with -mfma: baseline x86-64 has no instruction to contract to.
+  if (!__builtin_cpu_supports("fma")) return "this CPU has no FMA instructions";
+#endif
+  return nullptr;
+}
+#else
+const char* default_flags_unavailable_reason() {
+  return "not built: only GCC contracts across statements by default (GNU dialects imply "
+         "-ffp-contract=fast), and only x86-64 and arm64 are covered";
+}
+#endif
+
+#if !SHEWCHUK_HAVE_CONTRACTED_REFERENCE || !SHEWCHUK_HAVE_DEFAULT_FLAGS_REFERENCE
+// Placeholders so that the table entry exists and reports why it cannot run.
+[[maybe_unused]] double missing_orient2d(const double*, const double*, const double*) {
+  return 0.0;
+}
+[[maybe_unused]] double missing_orient3d(const double*, const double*, const double*,
+                                         const double*) {
+  return 0.0;
+}
+[[maybe_unused]] double missing_insphere(const double*, const double*, const double*,
+                                         const double*, const double*) {
+  return 0.0;
 }
 #endif
 
@@ -88,6 +116,9 @@ void initialize_implementations() {
     // exactinit() itself is plain arithmetic on constants; it is safe to run
     // even when the predicates of this build are not.
     if (contracted_unavailable_reason() == nullptr) shewchuk_contracted_exactinit();
+#endif
+#if SHEWCHUK_HAVE_DEFAULT_FLAGS_REFERENCE
+    if (default_flags_unavailable_reason() == nullptr) shewchuk_default_flags_exactinit();
 #endif
     return true;
   }();
@@ -115,6 +146,17 @@ const std::vector<Implementation>& all_implementations() {
 #else
       {"reference_contracted", "NEGATIVE CONTROL: not built for this compiler", missing_orient2d,
        missing_orient3d, missing_orient3d, missing_insphere, contracted_unavailable_reason},
+#endif
+#if SHEWCHUK_HAVE_DEFAULT_FLAGS_REFERENCE
+      {"reference_default_flags",
+       "NEGATIVE CONTROL: the same file built with -O2 and the compiler's default "
+       "floating-point flags; must be wrong",
+       default_flags_orient2d, default_flags_orient3d, default_flags_incircle,
+       default_flags_insphere, default_flags_unavailable_reason},
+#else
+      {"reference_default_flags", "NEGATIVE CONTROL: not built for this compiler",
+       missing_orient2d, missing_orient3d, missing_orient3d, missing_insphere,
+       default_flags_unavailable_reason},
 #endif
   };
   return table;

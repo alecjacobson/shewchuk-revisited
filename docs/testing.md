@@ -40,6 +40,7 @@ two extra cross-checks of the oracle.
 | `differential.reference` | the reference has zero sign mismatches against the oracle, and its value hash equals the recorded one |
 | `differential.reference_staged` | the instrumented build returns bit-identical values |
 | `negative_control.fp_contract` | the same file built with `-O2 -ffp-contract=fast` IS caught returning wrong signs (skipped where the compiler has no such mode). On x86-64 it is built with `-mfma -mno-avx2`: when clang may use AVX2 its contracted code returns different values but no wrong sign on the corpus, which only the value hash sees |
+| `negative_control.default_flags` | the same file built with `-O2` and no floating-point flag at all IS caught returning wrong signs. GCC only (its GNU dialects imply `-ffp-contract=fast`); skipped for other compilers, whose defaults have not been seen to change a sign. On x86-64 the file is built with `-mfma`, as `-march=x86-64-v3` or `-march=native` would, and the test is skipped on a CPU without FMA |
 
 Tests of the library (`src/predicates.cpp`):
 
@@ -49,11 +50,14 @@ Tests of the library (`src/predicates.cpp`):
 | `differential.library_hooked` | the same for the library's test-only build |
 | `library.stages` | every stage of the library decides at least 2% of its cases, and every single case is decided by the same stage as in the reference. For orient2d the library has one test where the reference has two (A0 and A); a call that test decides is counted as A0 if its two products have opposite signs or one is zero, the class the reference decides in A0, and as A otherwise. A reference-A0 case that the library handed to `orient2dadapt()` would be reported as B, Bx, C or D and fail |
 | `library.orient2d_first_test` | the library's merged first test of orient2d returns the reference's value, in the reference's stage, on 234256 combinations of special products the corpus does not contain: zeros of both signs, equal and opposite products, subnormal, huge, overflowed to infinity |
+| `library.input_domain` | on a slice of the corpus rescaled by powers of two: exact at the edge of the supported domain (coordinate exponents in [-142, 201]) and up to the observed per-predicate limits; one step beyond them, overflow gives NaN or an infinity and never a finite wrong sign, underflow gives silently wrong signs; a NaN coordinate gives NaN and an infinite one never a finite value. The part beyond the domain records current behaviour, it is not a contract (docs/exactness.md, "Input domain") |
 | `library.expansions` | `fast_expansion_sum_zeroelim`, `scale_expansion_zeroelim` and `estimate` return the same components as the reference's routines on random and adversarial expansions, up to the largest lengths any predicate uses |
 | `library.constants` | the compile-time constants equal the globals `exactinit()` computes, their formulas and their documented bit patterns |
 | `library.api`, `library.api_c` | the public headers from C++ and C, including the opt-in 1996 names |
 | `library.threads` | several threads calling the predicates get the single-threaded values |
 | `library.symbols` | the library exports the four `shewchuk_` predicates and nothing else |
+| `library.lto_fast_math_caller` | a caller compiled with `-O3 -ffast-math` (MSVC: `/fp:fast`) and link-time optimization, linked with those flags against a link-time-optimized build of the library that has the same flags in front of the project's strict ones, gets the recorded values bit for bit on the whole corpus (skipped if the toolchain has no link-time optimization, or on an x86-64 CPU without FMA: the test compiles with `-mfma`) |
+| `negative_control.lto_fast_math_caller` | the same test IS failed by a library copy built with `-ffp-contract=fast` instead of the strict flags. The criterion is the value hash: with clang this copy returns different values but no wrong sign on the corpus, with GCC it returns wrong signs |
 | `library.no_fma` | the library's object code contains no fused multiply-add and no call to `fma()` (skipped if no disassembler is found or the architecture is not arm64 / x86-64) |
 | `negative_control.no_fma` | that check IS triggered by the contracted reference build |
 | `library.refuses_x87` | compiled for x87 extended-precision arithmetic (the build's flags plus `-mfpmath=387`), `src/predicates.cpp` stops at its `#error` on `FLT_EVAL_METHOD` (skipped where the compiler has no such mode: not x86, or clang on x86-64) |
