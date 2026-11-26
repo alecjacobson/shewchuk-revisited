@@ -324,8 +324,6 @@ by the caller.
 - The integer stage (above). It changes returned magnitudes, never signs: a
   call it decides returns -1.0, 0.0 or +1.0 where the 1996 code returns an
   approximation of the determinant.
-- Stage D of `orient2dadapt()` is a function of its own
-  (`orient2d_exact_stages()`), with the same operations in the same order.
 
 Not arithmetic:
 

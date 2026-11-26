@@ -1,7 +1,7 @@
 # Proof: the exact integer stage
 
 Code: [`src/integer_stage.h`](../../src/integer_stage.h). Hook:
-`*_after_filter()` and `orient2d_exact_stages()` in
+`*_after_filter()` and `orient2dadapt()` in
 [`src/predicates.cpp`](../../src/predicates.cpp). Ledger:
 [`docs/exactness.md`](../exactness.md).
 
@@ -318,16 +318,14 @@ operation is `mul`, which widens. `refused` (2) is distinct from every sign.
 
 In `predicates.cpp` the stage is called at one place per predicate: for
 `orient3d`, `incircle` and `insphere` when stage A has not certified the sign
-(`*_after_filter()`), for `orient2d` when stage C has not
-(`orient2d_exact_stages()`; stages B and C of `orient2d` are cheaper than the
-integer stage). A sign is returned as it is; a refusal leads to the 1996 code
+(`*_after_filter()`), for `orient2d` when stage C has not (inside
+`orient2dadapt()`; stages B and C of `orient2d` are cheaper than the integer
+stage). A sign is returned as it is; a refusal leads to the 1996 code
 that would have run at that point, with the arguments it always received.
 Non-finite inputs are refused, so the same floating-point operations run on
 them as before the stage existed (their result is unspecified, as
 documented).
 
-The stage D of `orient2dadapt()` was moved, verbatim, into
-`orient2d_exact_stages()` so that the stages before it do not pay for a call.
 The library built without the integer stage
 (`SHEWCHUK_PREDICATES_NO_INTEGER_STAGE`, test only) still returns the 1996
 values bit for bit on the whole corpus (`differential.library_expansion_only`).

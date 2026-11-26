@@ -33,8 +33,8 @@
 // (integer_stage.h). For orient3d, incircle and insphere it is tried when the
 // first filter (stage A) cannot certify the sign, before the adaptive stages
 // B, C and D (the *_after_filter() functions); for orient2d, whose stages B
-// and C are cheaper than it, it is tried before stage D
-// (orient2d_exact_stages()). It returns only a sign, so a call it decides
+// and C are cheaper than it, it is tried before stage D (in
+// orient2dadapt()). It returns only a sign, so a call it decides
 // returns -1.0, 0.0 or +1.0. Compiled with
 // SHEWCHUK_PREDICATES_NO_INTEGER_STAGE (test only) the stage is left out and
 // every returned value is the 1996 code's, bit for bit.
@@ -372,78 +372,7 @@ double estimate(int elen, const double *e)
 // orient2d
 // ---------------------------------------------------------------------------
 
-// What runs when stage C of orient2d cannot certify the sign: the exact
-// integer stage (integer_stage.h), and behind it (coordinates too wide for
-// its tiers, or not finite) stage D of 1996.
-//
-// For orient2d the integer stage is here and not directly behind stage A as
-// for the other predicates: stages B and C of orient2d cost less than the
-// integer stage, stage D costs more.
-//
-// The second half is lines 1601-1616 of predicates.c: the exact stage (D) of
-// orient2dadapt(), verbatim, in a function of its own so that the stages
-// before it do not pay for a function call's saved registers. B0 to B3 are
-// the components of stage B's expansion, passed by value so that the array
-// stays in registers in orient2dadapt(); the other arguments are
-// orient2dadapt()'s variables of the same names.
-SHEWCHUK_NOINLINE
-double orient2d_exact_stages(const double *pa, const double *pb, const double *pc,
-                             double acx, double acy, double bcx, double bcy,
-                             double acxtail, double acytail,
-                             double bcxtail, double bcytail,
-                             double B0, double B1, double B2, double B3)
-{
-  const double B[4] = {B0, B1, B2, B3};
-  double C1[8], C2[12], D[16];
-  int C1length, C2length, Dlength;
-  double u[4];
-  double u3;
-  double s1, t1;
-  double s0, t0;
-
-  double bvirt;
-  double avirt, bround, around;
-  double c;
-  double abig;
-  double ahi, alo, bhi, blo;
-  double err1, err2, err3;
-  double _i, _j;
-  double _0;
-
-#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
-  const int sign = shewchuk::detail::integer_stage::orient2d(pa, pb, pc);
-  if (sign != shewchuk::detail::integer_stage::refused) {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
-    return sign;
-  }
-#else
-  (void)pa, (void)pb, (void)pc;
-#endif
-
-  Two_Product(acxtail, bcy, s1, s0);
-  Two_Product(acytail, bcx, t1, t0);
-  Two_Two_Diff(s1, s0, t1, t0, u3, u[2], u[1], u[0]);
-  u[3] = u3;
-  C1length = fast_expansion_sum_zeroelim(4, B, 4, u, C1);
-
-  Two_Product(acx, bcytail, s1, s0);
-  Two_Product(acy, bcxtail, t1, t0);
-  Two_Two_Diff(s1, s0, t1, t0, u3, u[2], u[1], u[0]);
-  u[3] = u3;
-  C2length = fast_expansion_sum_zeroelim(C1length, C1, 4, u, C2);
-
-  Two_Product(acxtail, bcytail, s1, s0);
-  Two_Product(acytail, bcxtail, t1, t0);
-  Two_Two_Diff(s1, s0, t1, t0, u3, u[2], u[1], u[0]);
-  u[3] = u3;
-  Dlength = fast_expansion_sum_zeroelim(C2length, C2, 4, u, D);
-
-  SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_D);
-  return(D[Dlength - 1]);
-}
-
-/* predicates.c lines 1535-1600: orient2dadapt() up to its exact stage, which
-   is orient2d_exact_stages() above */
+/* predicates.c lines 1535-1617: orient2dadapt() */
 SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const double *pc,
                      double detsum)
 {
@@ -452,8 +381,13 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
   double detleft, detright;
   double detlefttail, detrighttail;
   double det, errbound;
-  double B[4];
+  double B[4], C1[8], C2[12], D[16];
   double B3;
+  int C1length, C2length, Dlength;
+  double u[4];
+  double u3;
+  double s1, t1;
+  double s0, t0;
 
   double bvirt;
   double avirt, bround, around;
@@ -502,9 +436,41 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
     return det;
   }
 
-  return orient2d_exact_stages(pa, pb, pc, acx, acy, bcx, bcy,
-                               acxtail, acytail, bcxtail, bcytail,
-                               B[0], B[1], B[2], B[3]);
+  // Not from 1996: the exact integer stage (integer_stage.h), tried before
+  // stage D. For orient2d it is here and not directly behind stage A as for
+  // the other predicates: stages B and C of orient2d cost less than the
+  // integer stage, stage D costs more. If it declines (coordinates too wide
+  // for its tiers, or not finite), stage D runs as in 1996.
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+  {
+    const int sign = shewchuk::detail::integer_stage::orient2d(pa, pb, pc);
+    if (sign != shewchuk::detail::integer_stage::refused) {
+      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+      return sign;
+    }
+  }
+#endif
+
+  Two_Product(acxtail, bcy, s1, s0);
+  Two_Product(acytail, bcx, t1, t0);
+  Two_Two_Diff(s1, s0, t1, t0, u3, u[2], u[1], u[0]);
+  u[3] = u3;
+  C1length = fast_expansion_sum_zeroelim(4, B, 4, u, C1);
+
+  Two_Product(acx, bcytail, s1, s0);
+  Two_Product(acy, bcxtail, t1, t0);
+  Two_Two_Diff(s1, s0, t1, t0, u3, u[2], u[1], u[0]);
+  u[3] = u3;
+  C2length = fast_expansion_sum_zeroelim(C1length, C1, 4, u, C2);
+
+  Two_Product(acxtail, bcytail, s1, s0);
+  Two_Product(acytail, bcxtail, t1, t0);
+  Two_Two_Diff(s1, s0, t1, t0, u3, u[2], u[1], u[0]);
+  u[3] = u3;
+  Dlength = fast_expansion_sum_zeroelim(C2length, C2, 4, u, D);
+
+  SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_D);
+  return(D[Dlength - 1]);
 }
 
 }  // namespace
