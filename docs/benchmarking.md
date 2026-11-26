@@ -263,12 +263,43 @@ Measured on the Apple M4 while the input-domain guard was designed
   `SHEWCHUK_GUARD_KEEP_IN_INTEGER_REGISTER` and
   `SHEWCHUK_GUARD_THROUGH_MEMORY` exist to prevent that. They change code
   generation only.
+- **A taken branch costs about a cycle** in a function this short. The first
+  test of `orient2d` used to end in a conditional branch that was taken on
+  the common path (to the `ret` behind the tail call of the slow path):
+  5.0 cycles per call on `uniform`. Laid out so that the common path falls
+  through to `ret` and the rare path branches away, the same instructions
+  take 4.1 to 4.2. Nothing of the kind was found for the other three first
+  filters, which the floating-point units limit: the same hint changed
+  nothing for `orient3d` and `incircle` and made clang's `insphere` 5%
+  slower (it vectorizes the filter differently).
+- **How the compiler pairs scalar operations into two-lane instructions is
+  not stable**, and it decides what the stages behind the first test cost.
+  Stage B of `orient2d` in scalar source: 77 floating-point operations up to
+  the exit of stage Bx with LLVM 22, 89 with Apple clang 21, 96 with GCC 16
+  (which pairs nothing), and 86 to 96 again with both clangs after an
+  unrelated change to the function. Written with the compiler's two-lane
+  vector type it is 75 with both clangs. That is why `orient2dadapt()` is
+  written with pairs.
+- **A stack frame in the first slow stage is a hazard.** With LLVM 22,
+  `orient2d` on mixtures (`mix_grid`, `mix_surface`) took a different number
+  of cycles in every process: 8.6 to 11.7 per call on `mix_grid` for one
+  binary, depending on where the stack happened to be (it moved with the
+  size of the environment when address randomization was off), while the
+  same function body from Apple clang took 8.65 every time. The two bodies
+  have the same loads and stores and the same branches; they differ in how
+  stage B is paired. `orient2dadapt()` now has no stack frame (no array, no
+  saved register, no stack protector), and the variation is gone: 8.5 in
+  every process. What exactly the processor did was not established.
 - A branch that depends on the end of the floating-point chain and is taken
   rarely costs 30 to 70 cycles when it is mispredicted, not the 14 of the
   pipeline: everything fetched behind it in the meantime is thrown away. That
   is the cost of `orient2d`'s branch for two zero products
   (`mix_grid`, `degenerate_lattice`), which the 1996 code returns without a
-  branch of its own.
+  branch of its own. Deciding that case on the common path instead (each
+  product has a factor whose two coordinates have equal bit patterns, read
+  from memory into integer registers, combined with the first test into one
+  condition) takes 13 to 18 more instructions per call: `uniform` 4.1 to 6.0
+  cycles, and `mix_grid` itself 8.6 to 10.2. Rejected.
 
 ## The baseline
 
