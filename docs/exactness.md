@@ -297,6 +297,15 @@ change is noticed; not a contract):
 | a NaN coordinate | NaN |
 | an infinite coordinate | NaN; orient2d can also return an infinity |
 
+The table describes the floating-point stages. The integer stage is exact
+for every finite input it accepts, so out-of-domain calls that reach it and
+are narrow enough get the exact sign; on the test's sample the library
+therefore fails on fewer out-of-domain inputs than its build without the
+integer stage, and never on more. That is not a wider domain: the first
+filter runs before the integer stage and can fail first, and wide inputs
+fall through (routing out-of-domain inputs to the integer stage is issue
+#33).
+
 A caller that maps the result to a sign with `(x > 0) - (x < 0)` turns a NaN
 into 0, "degenerate". Inputs that may be outside the domain must be checked
 by the caller.
