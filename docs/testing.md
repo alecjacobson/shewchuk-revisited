@@ -122,7 +122,12 @@ What it requires:
 - **no exception flags**: at the corners of the floating-point domain, a call
   that a floating-point stage decides does not raise the underflow or the
   overflow flag; far outside, the unguarded stages do (so the check can
-  fail);
+  fail). This is measured on the test-only build. The shipped library built
+  by clang can raise a spurious overflow or underflow flag in insphere's
+  first filter inside the domain (its returned values are unaffected and
+  bit-identical to GCC's; seen in an independent review, also before the
+  guard existed, and attributed, unconfirmed, to an unused vector lane), so
+  callers must not rely on the flags;
 - **non-finite input**: NaN for a NaN or an infinity at every coordinate
   position, alone and in combinations, at the case's own scale and at both
   ends of the format.

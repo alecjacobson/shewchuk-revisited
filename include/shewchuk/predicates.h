@@ -27,6 +27,11 @@
  * underflows.) If a coordinate is an infinity or a NaN, the result is a NaN;
  * note that a NaN is neither > 0 nor < 0.
  *
+ * This holds in the default floating-point environment: rounding to nearest,
+ * and subnormal numbers enabled. A thread that has selected another rounding
+ * mode, or flush-to-zero / denormals-are-zero (as -ffast-math start-up code
+ * does on some platforms), can get wrong signs.
+ *
  * The functions are defined in the compiled library, which the project's
  * build compiles with the floating-point flags exactness depends on. The code
  * that includes this header may be compiled with any flags. */
