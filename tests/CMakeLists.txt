@@ -35,7 +35,11 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
   elseif(target_arch MATCHES "^(x86_64|AMD64|amd64)$")
     # Baseline x86-64 has no fused multiply-add; enable it so that the
     # compiler has something to contract to. Checked at run time.
-    set(contracted_flags -O2 -ffp-contract=fast -mfma)
+    # AVX2 is turned off because clang, when it may use AVX2 (for example
+    # with -march=x86-64-v3 in the user's flags), contracts this file in a
+    # way that changes thousands of returned values but not one sign on the
+    # corpus: such a build would not be a negative control for the sign test.
+    set(contracted_flags -O2 -ffp-contract=fast -mfma -mno-avx2)
   endif()
 endif()
 

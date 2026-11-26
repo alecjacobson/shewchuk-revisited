@@ -13,6 +13,11 @@ set(count 0)
 foreach(entry IN LISTS defined)
   string(REGEX REPLACE "^.* " "" symbol "${entry}")
   string(REGEX REPLACE "^_" "" symbol "${symbol}")  # Mach-O leading underscore
+  # 32-bit x86 position-independent code: the compiler emits these helpers
+  # itself, with hidden visibility. They are not symbols of the library.
+  if(symbol MATCHES "^_*x86\\.get_pc_thunk\\.")
+    continue()
+  endif()
   if(NOT symbol MATCHES "^${PREFIX}")
     message(SEND_ERROR "unprefixed external symbol: ${symbol}")
   endif()

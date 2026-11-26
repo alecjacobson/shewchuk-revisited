@@ -39,7 +39,7 @@ two extra cross-checks of the oracle.
 | `stages.coverage` | every stage (A0, A, B, Bx, C, D) of every predicate decides at least 2% of its cases; prints the stage table |
 | `differential.reference` | the reference has zero sign mismatches against the oracle, and its value hash equals the recorded one |
 | `differential.reference_staged` | the instrumented build returns bit-identical values |
-| `negative_control.fp_contract` | the same file built with `-O2 -ffp-contract=fast` IS caught returning wrong signs (skipped where the compiler has no such mode) |
+| `negative_control.fp_contract` | the same file built with `-O2 -ffp-contract=fast` IS caught returning wrong signs (skipped where the compiler has no such mode). On x86-64 it is built with `-mfma -mno-avx2`: when clang may use AVX2 its contracted code returns different values but no wrong sign on the corpus, which only the value hash sees |
 
 Tests of the library (`src/predicates.cpp`):
 
