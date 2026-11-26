@@ -428,11 +428,13 @@ that way on every platform.
 
 ## 10. Return value
 
-The public functions return `double`. When the integer stage decides, they
-return its sign converted to `double`: exactly `-1.0`, `+0.0` or `+1.0`. The
-header has always said that only the sign of the result is meaningful; this
-is the first stage for which the magnitude is not even an approximation of
-the determinant.
+The double-returning public functions return, when the integer stage decides,
+its sign converted to `double`: exactly `-1.0`, `+0.0` or `+1.0`. The header
+has always said that only the sign of the result is meaningful; this is the
+first stage for which the magnitude is not even an approximation of the
+determinant. The sign-returning public functions (`shewchuk_<name>_sign()`)
+return the sign as an `int` whatever stage decides; see "The two return-value
+contracts" in the ledger.
 
 ## 11. How the tests relate to this proof
 

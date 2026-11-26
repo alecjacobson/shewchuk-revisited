@@ -1,10 +1,18 @@
 /* Adaptive exact geometric predicates (after Shewchuk, 1996). C and C++.
  *
- * Each function returns a double whose SIGN is exact: it is the sign of the
- * determinant below evaluated without any roundoff. Only the sign means
- * anything. The magnitude must not be relied on: depending on which internal
- * stage decides a call, the value is an approximation of the determinant or
- * just -1.0, 0.0 or +1.0.
+ * Each predicate comes in two forms.
+ *
+ * shewchuk_<name>_sign() returns the sign of the determinant below, evaluated
+ * without any roundoff, as an int: +1, 0 or -1. If a coordinate is an
+ * infinity or a NaN it returns SHEWCHUK_SIGN_NOT_FINITE, which is none of the
+ * three: an input without a determinant is never reported as degenerate.
+ *
+ * shewchuk_<name>() returns a double whose SIGN is that sign, as the 1996
+ * functions do. Only the sign means anything. The magnitude must not be
+ * relied on: depending on which internal stage decides a call, the value is
+ * an approximation of the determinant or just -1.0, 0.0 or +1.0. If a
+ * coordinate is an infinity or a NaN the value is a NaN, which is neither
+ * > 0 nor < 0: code that tests only those two treats it as zero.
  *
  *   orient2d(a, b, c)        > 0 if a, b, c are in counterclockwise order,
  *                            < 0 if clockwise, 0 if collinear
@@ -20,12 +28,10 @@
  * doubles. The functions never write through their arguments, keep no state,
  * need no initialization call and may be called from any number of threads.
  *
- * Domain: every finite double. If all coordinates are finite, the result is
- * finite and its sign is exact, whatever their magnitudes: subnormal numbers,
- * numbers near the largest double and any mixture included. (The 1996 code
- * is exact only as long as no intermediate operation overflows or
- * underflows.) If a coordinate is an infinity or a NaN, the result is a NaN;
- * note that a NaN is neither > 0 nor < 0.
+ * Domain: every finite double. If all coordinates are finite, the sign is
+ * exact, whatever their magnitudes: subnormal numbers, numbers near the
+ * largest double and any mixture included. (The 1996 code is exact only as
+ * long as no intermediate operation overflows or underflows.)
  *
  * This holds in the default floating-point environment: rounding to nearest,
  * and subnormal numbers enabled. A thread that has selected another rounding
@@ -50,11 +56,40 @@ double shewchuk_incircle(const double *pa, const double *pb, const double *pc,
 double shewchuk_insphere(const double *pa, const double *pb, const double *pc,
                          const double *pd, const double *pe);
 
+/* What the _sign functions return if a coordinate is an infinity or a NaN.
+ * Not a sign: neither 0 nor +1 nor -1, and neither is its negation. */
+#define SHEWCHUK_SIGN_NOT_FINITE 2
+
+int shewchuk_orient2d_sign(const double *pa, const double *pb, const double *pc);
+int shewchuk_orient3d_sign(const double *pa, const double *pb, const double *pc,
+                           const double *pd);
+int shewchuk_incircle_sign(const double *pa, const double *pb, const double *pc,
+                           const double *pd);
+int shewchuk_insphere_sign(const double *pa, const double *pb, const double *pc,
+                           const double *pd, const double *pe);
+
 #ifdef __cplusplus
 } /* extern "C" */
 
-/* The same four functions as shewchuk::orient2d(...) etc. */
+/* The same functions as shewchuk::orient2d(...), shewchuk::orient2d_sign(...)
+ * etc., and the constant as shewchuk::sign_not_finite. */
 namespace shewchuk {
+
+inline constexpr int sign_not_finite = SHEWCHUK_SIGN_NOT_FINITE;
+
+inline int orient2d_sign(const double *pa, const double *pb, const double *pc) {
+  return shewchuk_orient2d_sign(pa, pb, pc);
+}
+inline int orient3d_sign(const double *pa, const double *pb, const double *pc, const double *pd) {
+  return shewchuk_orient3d_sign(pa, pb, pc, pd);
+}
+inline int incircle_sign(const double *pa, const double *pb, const double *pc, const double *pd) {
+  return shewchuk_incircle_sign(pa, pb, pc, pd);
+}
+inline int insphere_sign(const double *pa, const double *pb, const double *pc, const double *pd,
+                         const double *pe) {
+  return shewchuk_insphere_sign(pa, pb, pc, pd, pe);
+}
 
 inline double orient2d(const double *pa, const double *pb, const double *pc) {
   return shewchuk_orient2d(pa, pb, pc);
