@@ -18,7 +18,9 @@
 //   * six array lengths in incircleadapt() are zero-initialized to silence a
 //     false compiler warning;
 //   * SHEWCHUK_STAGE_HIT() marks which stage decides a call. It expands to
-//     nothing except in the test-only build (test_hooks.h).
+//     nothing except in the test-only build (test_hooks.h);
+//   * orient2dadapt(), orient3dadapt() and incircleadapt() are never inlined
+//     into the predicates that call them (SHEWCHUK_NOINLINE, see its comment).
 //
 // EXACTNESS DEPENDS ON HOW THIS FILE IS COMPILED. The algorithms need every
 // operation to be one correctly rounded IEEE 754 binary64 operation, exactly
@@ -59,6 +61,27 @@ int shewchuk_hooked_last_stage = -1;
 #else
 #include "shewchuk/predicates.h"
 #define SHEWCHUK_STAGE_HIT(stage) ((void)0)
+#endif
+
+// The first filter of a predicate decides almost every call, so it should be
+// a small leaf function: no stack frame, no saved registers, a tail call to
+// the *adapt() function when the filter fails. The *adapt() functions have
+// internal linkage and one caller each, so clang inlines them unless told not
+// to, and the predicate then sets up the adaptive stages' stack frame (saved
+// registers, a stack probe, a stack-protector check) on every call, including
+// the calls the filter decides. Code generation only: the arithmetic is the
+// same either way.
+//
+// insphereadapt() is deliberately not marked. Measured with clang, the
+// first filter of insphere is faster when insphereadapt() is inlined into it
+// (the compiler then vectorizes the filter), and GCC does not inline it
+// either way. Measure before changing that (docs/benchmarking.md).
+#if defined(__GNUC__) || defined(__clang__)
+#define SHEWCHUK_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define SHEWCHUK_NOINLINE __declspec(noinline)
+#else
+#define SHEWCHUK_NOINLINE
 #endif
 
 namespace {
@@ -330,7 +353,7 @@ double estimate(int elen, const double *e)
 // ---------------------------------------------------------------------------
 
 /* predicates.c lines 1535-1617: orient2dadapt() */
-double orient2dadapt(const double *pa, const double *pb, const double *pc,
+SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const double *pc,
                      double detsum)
 {
   double acx, acy, bcx, bcy;
@@ -462,7 +485,7 @@ namespace {
 // ---------------------------------------------------------------------------
 
 /* predicates.c lines 1886-2289: orient3dadapt() */
-double orient3dadapt(const double *pa, const double *pb, const double *pc,
+SHEWCHUK_NOINLINE double orient3dadapt(const double *pa, const double *pb, const double *pc,
                      const double *pd, double permanent)
 {
   double adx, bdx, cdx, ady, bdy, cdy, adz, bdz, cdz;
@@ -920,7 +943,7 @@ namespace {
 // ---------------------------------------------------------------------------
 
 /* predicates.c lines 2651-3223: incircleadapt() */
-double incircleadapt(const double *pa, const double *pb, const double *pc,
+SHEWCHUK_NOINLINE double incircleadapt(const double *pa, const double *pb, const double *pc,
                      const double *pd, double permanent)
 {
   double adx, bdx, cdx, ady, bdy, cdy;
