@@ -31,10 +31,12 @@
 //     the library's first test with its guard holding, without a detour
 //     through the domain check. Two exceptions, both with the reference's
 //     value: orient2d with two zero products, which leaves by a branch of
-//     its own; and insphere when every coordinate is below 2^-120 in
-//     magnitude, where the error bound is below the guard's floor (2^-683)
-//     and the first filter's value is returned after the domain check
-//     ("rechecked");
+//     its own; and insphere where the first filter's value is returned after
+//     the domain check ("rechecked"), which may happen in two kinds of case:
+//     every coordinate is below 2^-100 in magnitude, so that the error bound
+//     can be below the guard's floor (2^-683); or the coordinates span more than
+//     253 bits (the wide_span and span_tier_5 families), so that the guard's
+//     bound on the differences, cubed, can exceed the error bound;
 //   * the wide tier of the integer stage decides none.
 //
 // Also checks that the stage-recording build returns exactly the values of
@@ -136,7 +138,8 @@ int main(int argc, char** argv) {
           zero_product_cases++;
         }
         if (generator.pred == INSPHERE && path == SHEWCHUK_PATH_RECHECKED) {
-          expected_path = extent_of(c, NUM_COORDS[INSPHERE]).highest <= -120;
+          expected_path = extent_of(c, NUM_COORDS[INSPHERE]).highest <= -100 ||
+                          width_of(c, NUM_COORDS[INSPHERE]) > 253;
           rechecked_cases++;
         }
       } else if (generator.pred == ORIENT2D) {
@@ -234,7 +237,7 @@ int main(int argc, char** argv) {
   if (library) {
     std::printf("%ld cases took a path the input-domain guard must not send a corpus case on "
                 "(%ld orient2d cases with two zero products left by their own branch; %ld tiny "
-                "insphere cases were rechecked)\n",
+                "or very wide insphere cases were rechecked)\n",
                 path_differences, zero_product_cases, rechecked_cases);
     // The recheck must stay the rare exception it is on in-range input.
     CHECK(rechecked_cases * 1000 < cases[INSPHERE]);

@@ -324,23 +324,37 @@ void insphere_lattice(Rng& r, double* c) {
 struct ValueStyle {
   int max_exponent;       // exponents are uniform in [-max_exponent, max_exponent]
   bool zeros_and_shorts;  // sometimes return zero or a short significand
-  // Instead: exponents in [WIDE_SPAN_LOW, max_exponent] or in
-  // [-max_exponent, -WIDE_SPAN_LOW], each with probability 1/2 (see "Wide
-  // span" below).
-  bool two_bands = false;
+  // Instead of max_exponent: two exponent bands (see "Wide span" below).
+  const struct Bands* bands = nullptr;
 };
 
-// The two exponent bands of the wide-span families are at least this far
-// from zero, so a value of each band in one case puts their bits more than
-// 2 * 70 + 52 = 192 positions apart.
-const int WIDE_SPAN_LOW = 70;
-const int WIDE_SPAN_HIGH = 100;
+// Two exponent bands: an exponent is in [high_min, high_max] or in
+// [-low_max, -low_min], each with probability 1/2. A full significand of
+// each band in one case puts their bits at least high_min + low_min + 53
+// positions apart.
+struct Bands {
+  int low_min, low_max;
+  int high_min, high_max;
+};
+// What the library's integer stage does with a case that has values of both
+// bands (the degenerate configurations shift some values by up to three
+// binades, hence the "about"):
+//   width 193 to 253 (about): its tier 4;
+const Bands SPAN_TIER_4 = {70, 100, 70, 100};
+//   width 259 to 305 (about): its tier 5;
+const Bands SPAN_TIER_5 = {103, 126, 103, 126};
+//   width 322 to 344 (about): too wide for its fast tiers. The low band stops
+//   at 2^-126 so that insphere stays inside the library's floating-point
+//   domain (width.h): the lowest set bit of any coordinate is then at
+//   2^(-126 - 3 - 52) or above, and 5 * -181 >= -914.
+const Bands WIDE_SPAN = {122, 126, 147, 165};
 
 // A binary exponent drawn the way `style` says.
 int style_exponent(Rng& r, ValueStyle style) {
-  if (!style.two_bands) return r.range(-style.max_exponent, style.max_exponent);
-  const int magnitude = r.range(WIDE_SPAN_LOW, style.max_exponent);
-  return r.coin() ? magnitude : -magnitude;
+  if (style.bands == nullptr) return r.range(-style.max_exponent, style.max_exponent);
+  const Bands& bands = *style.bands;
+  if (r.coin()) return r.range(bands.high_min, bands.high_max);
+  return -r.range(bands.low_min, bands.low_max);
 }
 
 double degenerate_value(Rng& r, ValueStyle style) {
@@ -425,33 +439,35 @@ GeneratorFn insphere_degenerate(ValueStyle style) {
 }
 
 // ---------------------------------------------------------------------------
-// Wide span: coordinates whose bits are spread over more than 189 positions
+// Wide span: coordinates whose bits are spread over hundreds of positions
 // ---------------------------------------------------------------------------
 // The library's exact integer stage (src/integer_stage.h) takes every call
 // the first filter cannot decide, provided all coordinates, scaled to
-// integers by one common power of two, fit in 189 bits. Inputs with a wider
+// integers by one common power of two, fit in 317 bits. Inputs with a wider
 // span are the only ones that still reach the adaptive stages B, C and D of
 // the library, so the corpus needs near-degenerate cases of that kind for
-// every one of those stages. The families below take their coordinates from
-// two exponent bands, [2^70, 2^101) and [2^-100, 2^-69) (inside the paper's
-// domain): a full significand in each band spans at least 193 bits.
+// every one of those stages. The "wide_span" families take their coordinates
+// from the two exponent bands of WIDE_SPAN above, inside the paper's domain.
+// The "span_tier_4" and "span_tier_5" families are the same with bands that
+// are closer together: near-degenerate cases for the two widest fast tiers
+// of the integer stage.
 //
-// "wide_span_degenerate" and its perturbations reuse the exactly degenerate
+// "..._degenerate" and its perturbations reuse the exactly degenerate
 // configurations above with that value style (inexact differences: stages B,
-// C and D). "wide_span_box" is exactly degenerate with exact differences
+// C and D). "..._box" is exactly degenerate with exact differences
 // (stage Bx): corners of an axis-aligned box centered at the origin, whose
 // coordinate differences are 0 or twice a coordinate.
 
 // A full 53-bit value of the high band (even axis) or the low band (odd).
-double wide_span_extent(Rng& r, int axis) {
-  const int magnitude = r.range(WIDE_SPAN_LOW, WIDE_SPAN_HIGH);
-  return r.with_exponent(axis % 2 == 0 ? magnitude : -magnitude);
+double wide_span_extent(Rng& r, const Bands& bands, int axis) {
+  return r.with_exponent(axis % 2 == 0 ? r.range(bands.high_min, bands.high_max)
+                                       : -r.range(bands.low_min, bands.low_max));
 }
 
 // (x, y), (-x, -y) and the origin: collinear.
-void orient2d_wide_span_box(Rng& r, double* c) {
-  const double x = wide_span_extent(r, 0);
-  const double y = wide_span_extent(r, 1);
+void orient2d_wide_span_box(Rng& r, const Bands& bands, double* c) {
+  const double x = wide_span_extent(r, bands, 0);
+  const double y = wide_span_extent(r, bands, 1);
   const double points[3][2] = {{x, y}, {-x, -y}, {0.0, 0.0}};
   for (int i = 0; i < 3; i++) {
     c[2 * i] = points[i][0];
@@ -462,10 +478,10 @@ void orient2d_wide_span_box(Rng& r, double* c) {
 // Four box corners in the plane through the origin that contains the box's
 // x axis direction and the diagonal (y, z): (x, y, z), (-x, y, z),
 // (x, -y, -z), (-x, -y, -z).
-void orient3d_wide_span_box(Rng& r, double* c) {
-  const double x = wide_span_extent(r, 0);
-  const double y = wide_span_extent(r, 1);
-  const double z = wide_span_extent(r, static_cast<int>(r.below(2)));
+void orient3d_wide_span_box(Rng& r, const Bands& bands, double* c) {
+  const double x = wide_span_extent(r, bands, 0);
+  const double y = wide_span_extent(r, bands, 1);
+  const double z = wide_span_extent(r, bands, static_cast<int>(r.below(2)));
   const double points[4][3] = {{x, y, z}, {-x, y, z}, {x, -y, -z}, {-x, -y, -z}};
   for (int i = 0; i < 4; i++) {
     for (int d = 0; d < 3; d++) c[3 * i + d] = points[i][d];
@@ -473,9 +489,9 @@ void orient3d_wide_span_box(Rng& r, double* c) {
 }
 
 // The four corners of a rectangle: cocircular.
-void incircle_wide_span_box(Rng& r, double* c) {
-  const double x = wide_span_extent(r, 0);
-  const double y = wide_span_extent(r, 1);
+void incircle_wide_span_box(Rng& r, const Bands& bands, double* c) {
+  const double x = wide_span_extent(r, bands, 0);
+  const double y = wide_span_extent(r, bands, 1);
   const double points[4][2] = {{x, y}, {-x, y}, {-x, -y}, {x, -y}};
   for (int i = 0; i < 4; i++) {
     c[2 * i] = points[i][0];
@@ -484,9 +500,9 @@ void incircle_wide_span_box(Rng& r, double* c) {
 }
 
 // Five different corners of a box: cospherical.
-void insphere_wide_span_box(Rng& r, double* c) {
-  const double extent[3] = {wide_span_extent(r, 0), wide_span_extent(r, 1),
-                            wide_span_extent(r, static_cast<int>(r.below(2)))};
+void insphere_wide_span_box(Rng& r, const Bands& bands, double* c) {
+  const double extent[3] = {wide_span_extent(r, bands, 0), wide_span_extent(r, bands, 1),
+                            wide_span_extent(r, bands, static_cast<int>(r.below(2)))};
   int corner[8] = {0, 1, 2, 3, 4, 5, 6, 7};
   for (int a = 7; a > 0; a--) std::swap(corner[a], corner[r.below(a + 1)]);
   for (int i = 0; i < 5; i++) {
@@ -637,15 +653,15 @@ std::vector<Generator> build_generators() {
   const int WIDE_EXPONENT[NUM_PREDS] = {140, 120, 100, 60};
   const ValueStyle WIDE_STYLE[NUM_PREDS] = {{40, true}, {30, true}, {30, true}, {20, true}};
   const ValueStyle FULL_53_BIT_STYLE = {4, false};
-  const ValueStyle WIDE_SPAN_STYLE = {WIDE_SPAN_HIGH, false, true};
 
   const GeneratorFn near_degenerate[NUM_PREDS] = {orient2d_near_collinear, orient3d_near_coplanar,
                                                   incircle_near_cocircular,
                                                   insphere_near_cospherical};
   const GeneratorFn lattice[NUM_PREDS] = {orient2d_lattice, orient3d_lattice, incircle_lattice,
                                           insphere_lattice};
-  const GeneratorFn wide_span_box[NUM_PREDS] = {orient2d_wide_span_box, orient3d_wide_span_box,
-                                                incircle_wide_span_box, insphere_wide_span_box};
+  void (*const wide_span_box[NUM_PREDS])(Rng&, const Bands&, double*) = {
+      orient2d_wide_span_box, orient3d_wide_span_box, incircle_wide_span_box,
+      insphere_wide_span_box};
   const GeneratorFn mixed[NUM_PREDS] = {orient2d_mixed_magnitudes, orient3d_mixed_magnitudes,
                                         incircle_mixed_magnitudes, insphere_mixed_magnitudes};
   auto degenerate = [](Pred pred, ValueStyle style) -> GeneratorFn {
@@ -684,14 +700,27 @@ std::vector<Generator> build_generators() {
     add("threshold_mixed_magnitudes", threshold(p, mixed[p]), 8);
     add("threshold_degenerate_wide", threshold(p, permute_points(p, wide)), 8);
 
-    // Too wide for the library's integer stage (see "Wide span" above).
-    const GeneratorFn wide_span = permute_points(p, degenerate(p, WIDE_SPAN_STYLE));
+    // Too wide for the fast tiers of the library's integer stage (see "Wide
+    // span" above).
+    const auto box_of = [p, &wide_span_box](const Bands& bands) {
+      const auto box = wide_span_box[p];
+      return GeneratorFn([box, &bands](Rng& r, double* c) { box(r, bands, c); });
+    };
+    const GeneratorFn wide_span = permute_points(p, degenerate(p, {0, false, &WIDE_SPAN}));
     add("wide_span_degenerate", wide_span);
     add("wide_span_degenerate_ulps", perturb_all(p, wide_span, 2));
     add("wide_span_degenerate_one_coordinate", perturb_one(p, wide_span, 50));
-    add("wide_span_box", permute_points(p, wide_span_box[p]));
-    add("wide_span_box_ulps", perturb_all(p, permute_points(p, wide_span_box[p]), 2));
+    add("wide_span_box", permute_points(p, box_of(WIDE_SPAN)));
+    add("wide_span_box_ulps", perturb_all(p, permute_points(p, box_of(WIDE_SPAN)), 2));
     add("threshold_wide_span", threshold(p, wide_span), 8);
+
+    // For the two widest fast tiers of the integer stage.
+    const GeneratorFn span_4 = permute_points(p, degenerate(p, {0, false, &SPAN_TIER_4}));
+    add("span_tier_4_degenerate_ulps", perturb_all(p, span_4, 2));
+    add("span_tier_4_box_ulps", perturb_all(p, permute_points(p, box_of(SPAN_TIER_4)), 2));
+    const GeneratorFn span_5 = permute_points(p, degenerate(p, {0, false, &SPAN_TIER_5}));
+    add("span_tier_5_degenerate_ulps", perturb_all(p, span_5, 2));
+    add("span_tier_5_box_ulps", perturb_all(p, permute_points(p, box_of(SPAN_TIER_5)), 2));
   }
   return generators;
 }

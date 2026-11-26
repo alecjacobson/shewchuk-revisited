@@ -330,7 +330,7 @@ floor exceeds the controls of the first test, `floor + 51 - 104` exceeds
 2^-51`, `ccwerrboundC > 2^-104`, every first-filter constant below 2^-48).
 
 After stage C, `orient2dadapt()` asks the integer stage, which decides the
-call unless its coordinates are wider than 189 bits **and** inside the
+call unless its coordinates are wider than 317 bits **and** inside the
 floating-point domain of section 5; only then does stage D run.
 
 **Two zero products.** Outside the window the first test returns `det` in
@@ -427,7 +427,7 @@ returns a NaN.
 ([integer-stage.md](integer-stage.md), section 7) returns `not_finite` if a
 coordinate is not finite; `refused` only
 if the input is in the floating-point domain (and, unless asked with
-`prefer_floating_point`, wider than 189 bits); never `refused` if asked with
+`prefer_floating_point`, wider than 317 bits); never `refused` if asked with
 `always_exact`; otherwise the exact sign (R3).
 
 `orient3d`, `incircle`, `insphere`:
@@ -503,6 +503,13 @@ most 464 bytes (its result is written to the caller's frame); above them the
 frames of the stage's entry functions (at most 2,100 bytes optimized) and of
 the predicate.
 
+Tiers 4 and 5 of the integer stage are functions of their own as well
+(`OutOfLine<D>`), for the same reason. Their frames are smaller than the
+wide tier's in every case, and they never run together with it: at most
+3,408 bytes optimized (GCC, `insphere`, tier 5; Apple clang: 2,592) and at
+most 31,792 unoptimized (Apple clang; GCC: 30,160). So they change none of
+the worst cases below.
+
 What that does to the library's worst-case stack use, which `insphere` sets:
 the largest frame the library had before, and still has, holds the arrays of
 `insphereexact()`: about 214,000 bytes optimized, 181,000 unoptimized.
@@ -525,11 +532,11 @@ The wide tier is slow: its integers have up to 10560 bits and the
 multiplication is the schoolbook one. On an Apple M4 (Apple clang, wall
 clock, coordinates with exponents from the whole range and one repeated
 point, so that no filter decides) a call takes about 1.5 µs (`orient2d`),
-8.5 µs (`orient3d`), 16 µs (`incircle`) and 51 µs (`insphere`). Tiers
-between 3 and 33 limbs would make moderately wide inputs faster; there are
-none yet.
+8.5 µs (`orient3d`), 16 µs (`incircle`) and 51 µs (`insphere`). Tiers 4
+and 5 take the inputs up to 317 bits; between them and the 33 limbs of the
+wide tier there is nothing yet.
 
-It is reached only by inputs that are wider than 189 bits, outside the
+It is reached only by inputs that are wider than 317 bits, outside the
 floating-point domain, and not decided by the first filter under its guard.
 
 ## 8. Inputs inside the range of the 1996 paper
@@ -541,10 +548,12 @@ values, with these exceptions, none of which changes a sign:
 - **Route only, same value.** A call whose first filter certifies but whose
   guard fails goes through `*_guard_failed()`, which finds the input in the
   floating-point domain and returns the filter's `det` (case 2 of Theorem
-  4). On the test corpus this happens only for `insphere` with every
-  coordinate below 2^-120 in magnitude, where `errbound` is below the
-  guard's floor 2^-683. `orient2d` with two zero products leaves the first
-  test by its own branch and returns the same zero.
+  4). On the test corpus this happens only for `insphere`, in two kinds of
+  case: every coordinate is below 2^-100 in magnitude, where `errbound` can
+  be below the guard's floor 2^-683; and coordinates that span more than 253
+  bits, where the cube of the guard's bound on the differences can exceed
+  `errbound`. `orient2d` with two zero products leaves the first test by its
+  own branch and returns the same zero.
 - **Different value, same sign.** `insphere` with a coordinate whose lowest
   set bit is below 2^-182 (possible in the paper's range, which goes down to
   2^-194): outside the floating-point domain, so a call the first filter

@@ -152,6 +152,10 @@ near-degenerate or lattice families), with both compilers:
 | `wide_span_box_ulps` | 84 | 10,000 |
 | `threshold_wide_span` | 201 | 1,250 |
 
+(Counted before the exponent bands of the `wide_span` families were moved
+further apart and the `span_tier_4` and `span_tier_5` families were added;
+the rows of those families have not been counted again.)
+
 One reproducer (coordinates of a, b, c, d as hexadecimal floats; the points
 are exactly coplanar and `predicates::adaptive::orient3d` returns a negative
 value):
