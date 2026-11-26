@@ -39,6 +39,11 @@ jobs:
       - name: Stage tables, hashes, constants and negative controls
         if: always()
         run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|differential.library|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
+      # No performance gating: this only shows that the harness runs here and
+      # which counter backend it found (hosted runners usually have none).
+      - name: Benchmark smoke run
+        if: always()
+        run: ctest --test-dir build -R "^bench[.]" --verbose
 
   # The library and the tests under sanitizers. The pristine reference is not
   # instrumented (cmake/Sanitizers.cmake): it has a known one-past-the-end
@@ -85,6 +90,11 @@ jobs:
       - name: Stage tables, hashes, constants and negative controls
         if: always()
         run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|differential.library|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
+      # No performance gating: this only shows that the harness runs here and
+      # which counter backend it found (hosted runners usually have none).
+      - name: Benchmark smoke run
+        if: always()
+        run: ctest --test-dir build -R "^bench[.]" --verbose
 
   windows:
     name: windows msvc Release
@@ -102,3 +112,8 @@ jobs:
       - name: Stage tables, hashes, constants and negative controls
         if: always()
         run: ctest --test-dir build -C Release -R "^(stages.coverage|differential.reference|negative_control.fp_contract|differential.library|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
+      # No performance gating: this only shows that the harness runs here and
+      # which counter backend it found (hosted runners usually have none).
+      - name: Benchmark smoke run
+        if: always()
+        run: ctest --test-dir build -C Release -R "^bench[.]" --verbose
