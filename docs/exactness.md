@@ -6,7 +6,7 @@ result is exactly the sign of the determinant, and no change may weaken that.
 
 **Current state.** The library (`src/predicates.cpp`) is a port of the four
 adaptive predicates of the 1996 `predicates.c`. Apart from the rewrites listed
-under [The first filters](#the-first-filters), which cannot change a returned
+under [The filters](#the-filters), which cannot change a returned
 value, it performs the same floating-point operations in the same order: on
 the whole test corpus every returned value is bit-identical to the pristine
 file's (see [testing.md](testing.md)). Every claim below is therefore the 1996
@@ -91,12 +91,12 @@ The paper describes these predicates in section 4.4. It does not print the
 derivations of their constants; they are the values computed by `exactinit()`
 in `predicates.c`.
 
-## The first filters
+## The filters
 
-The first filter (stage A) of every predicate is written differently from the
-1996 code. Each rewrite below returns the same double as the original, for
-every input in the first two cases and for every input that does not make a
-product NaN in the third, so the claims above are unchanged. The proof obligation is the
+The filters (stages A, B and C) of every predicate are written differently
+from the 1996 code. Each rewrite below returns the same double as the
+original, for every input in the first two cases and for every input that does
+not make a product NaN in the third, so the claims above are unchanged. The proof obligation is the
 argument here plus the recorded value hash, which must still match
 (`differential.library`).
 
@@ -108,10 +108,10 @@ zero, and the sign of a zero does not affect a comparison). If `det` or `e` is
 NaN every one of the comparisons is false. So the two tests are the same
 predicate on all doubles, for every `e`. The same holds with `>=` in place of
 `>`. The first filters of orient3d, incircle and insphere use `>`, as in 1996.
-orient2d's merged first test (below) uses `>=`, as its filter does in 1996.
-The later stages, which also use `>=`, are written as in 1996.
+orient2d's merged first test (below) and the later filters (stages B and C of
+every predicate) use `>=`, as in 1996.
 
-**`fabs` in the permanent.** The 1996 macro `Absolute(a)` is
+**`fabs` for absolute values.** The 1996 macro `Absolute(a)` is
 `(a >= 0.0 ? a : -a)`. It equals `fabs(a)` except that `Absolute(-0.0)` is
 `-0.0` and that for a NaN the sign bit differs. The absolute values feed only
 `permanent`, a sum of products of them. Replacing a `-0.0` term by `+0.0` can
@@ -121,6 +121,12 @@ c * permanent` here, and `c * permanent + resulterrbound * |det|` after it is
 passed to the `*adapt` function), and an error bound is used only as the
 right-hand side of comparisons, which the sign of a zero and the bits of a NaN
 do not affect. No returned value is computed from `permanent`.
+
+Stage C forms its bound as `c * permanent + resulterrbound * Absolute(det)`
+(`detsum` in place of `permanent` in orient2d); the library uses `fabs(det)`.
+The two differ only for `det` a negative zero or a NaN, which changes the
+bound at most in the sign of a zero or in the bits of a NaN, and the bound is
+only compared.
 
 ### orient2d: the merged first test
 

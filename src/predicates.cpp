@@ -18,11 +18,10 @@
 //     of its inputs (see the comment there);
 //   * six array lengths in incircleadapt() are zero-initialized to silence a
 //     false compiler warning;
-//   * the first filters of orient3d, incircle and insphere (in the
-//     shewchuk_* functions) take absolute values with fabs and compare
-//     fabs(det) with the error bound once, instead of the Absolute() macro
-//     and two comparisons; docs/exactness.md ("The first filters") shows that
-//     no returned value can change;
+//   * every filter (stages A, B and C) takes absolute values with fabs and
+//     compares fabs(det) with the error bound once, instead of the Absolute()
+//     macro and two comparisons; docs/exactness.md ("The filters") shows
+//     that no returned value can change;
 //   * orient2d decides the sign test on its two products and the first
 //     filter with one comparison (see shewchuk_orient2d);
 //   * SHEWCHUK_STAGE_HIT() marks which stage decides a call. It expands to
@@ -402,7 +401,7 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
 
   det = estimate(4, B);
   errbound = ccwerrboundB * detsum;
-  if ((det >= errbound) || (-det >= errbound)) {
+  if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
     return det;
   }
@@ -418,10 +417,10 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
     return det;
   }
 
-  errbound = ccwerrboundC * detsum + resulterrbound * Absolute(det);
+  errbound = ccwerrboundC * detsum + resulterrbound * std::fabs(det);
   det += (acx * bcytail + bcy * acxtail)
        - (acy * bcxtail + bcx * acytail);
-  if ((det >= errbound) || (-det >= errbound)) {
+  if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_C);
     return det;
   }
@@ -583,7 +582,7 @@ SHEWCHUK_NOINLINE double orient3dadapt(const double *pa, const double *pb, const
 
   det = estimate(finlength, fin1);
   errbound = o3derrboundB * permanent;
-  if ((det >= errbound) || (-det >= errbound)) {
+  if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
     return det;
   }
@@ -605,7 +604,7 @@ SHEWCHUK_NOINLINE double orient3dadapt(const double *pa, const double *pb, const
     return det;
   }
 
-  errbound = o3derrboundC * permanent + resulterrbound * Absolute(det);
+  errbound = o3derrboundC * permanent + resulterrbound * std::fabs(det);
   det += (adz * ((bdx * cdytail + cdy * bdxtail)
                  - (bdy * cdxtail + cdx * bdytail))
           + adztail * (bdx * cdy - bdy * cdx))
@@ -615,7 +614,7 @@ SHEWCHUK_NOINLINE double orient3dadapt(const double *pa, const double *pb, const
        + (cdz * ((adx * bdytail + bdy * adxtail)
                  - (ady * bdxtail + bdx * adytail))
           + cdztail * (adx * bdy - ady * bdx));
-  if ((det >= errbound) || (-det >= errbound)) {
+  if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_C);
     return det;
   }
@@ -1062,7 +1061,7 @@ SHEWCHUK_NOINLINE double incircleadapt(const double *pa, const double *pb, const
 
   det = estimate(finlength, fin1);
   errbound = iccerrboundB * permanent;
-  if ((det >= errbound) || (-det >= errbound)) {
+  if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
     return det;
   }
@@ -1079,7 +1078,7 @@ SHEWCHUK_NOINLINE double incircleadapt(const double *pa, const double *pb, const
     return det;
   }
 
-  errbound = iccerrboundC * permanent + resulterrbound * Absolute(det);
+  errbound = iccerrboundC * permanent + resulterrbound * std::fabs(det);
   det += ((adx * adx + ady * ady) * ((bdx * cdytail + cdy * bdxtail)
                                      - (bdy * cdxtail + cdx * bdytail))
           + 2.0 * (adx * adxtail + ady * adytail) * (bdx * cdy - bdy * cdx))
@@ -1089,7 +1088,7 @@ SHEWCHUK_NOINLINE double incircleadapt(const double *pa, const double *pb, const
        + ((cdx * cdx + cdy * cdy) * ((adx * bdytail + bdy * adxtail)
                                      - (ady * bdxtail + bdx * adytail))
           + 2.0 * (cdx * cdxtail + cdy * cdytail) * (adx * bdy - ady * bdx));
-  if ((det >= errbound) || (-det >= errbound)) {
+  if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_C);
     return det;
   }
@@ -1990,7 +1989,7 @@ double insphereadapt(const double *pa, const double *pb, const double *pc,
 
   det = estimate(finlength, fin1);
   errbound = isperrboundB * permanent;
-  if ((det >= errbound) || (-det >= errbound)) {
+  if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
     return det;
   }
@@ -2015,7 +2014,7 @@ double insphereadapt(const double *pa, const double *pb, const double *pc,
     return det;
   }
 
-  errbound = isperrboundC * permanent + resulterrbound * Absolute(det);
+  errbound = isperrboundC * permanent + resulterrbound * std::fabs(det);
   abeps = (aex * beytail + bey * aextail)
         - (aey * bextail + bex * aeytail);
   bceps = (bex * ceytail + cey * bextail)
@@ -2048,7 +2047,7 @@ double insphereadapt(const double *pa, const double *pb, const double *pc,
                  * (bez * cd3 - cez * bd3 + dez * bc3)
                  + (cex * cextail + cey * ceytail + cez * ceztail)
                  * (dez * ab3 + aez * bd3 + bez * da3)));
-  if ((det >= errbound) || (-det >= errbound)) {
+  if (std::fabs(det) >= errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_C);
     return det;
   }
