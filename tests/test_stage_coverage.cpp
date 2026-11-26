@@ -8,11 +8,25 @@
 // other exactness test meaningless.
 //
 // "reference" (the default) uses the instrumented copy of the pristine file.
-// "library" uses the library's test-only build, and additionally requires
-// that every single case is decided by the same stage as in the reference.
+//
+// "library" uses the library's test-only build. The library has one stage the
+// 1996 code lacks: the exact integer stage (I). It sits directly behind the
+// first filter (for orient2d: behind stage C; see integer_stage_precedes() in
+// width.h) and takes every case that reaches it whose coordinates are narrow
+// enough (width.h); wider cases fall through to the 1996 stages. So for the
+// library the gate additionally requires, for every single case:
+//   * decided in the reference by a stage before the integer stage: the same
+//     stage in the library;
+//   * otherwise, width at most INTEGER_STAGE_MAX_WIDTH: stage I;
+//   * otherwise (the fall-through path): the same stage as in the reference.
+// The stages of the library behind the integer stage (B, Bx, C and D; for
+// orient2d, D) are therefore reached only by cases too wide for it, and the
+// gate requires enough of those for each of them: the fall-through path must
+// stay covered.
 //
 // Also checks that the stage-recording build returns exactly the values of
-// the pristine build, i.e. that the instrumentation is behavior-neutral.
+// the build it instruments (the pristine reference, or the shipped library),
+// i.e. that the instrumentation is behavior-neutral.
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -22,6 +36,7 @@
 #include "generators.h"
 #include "implementations.h"
 #include "stages.h"
+#include "width.h"
 
 using namespace shewchuk_test;
 
@@ -31,12 +46,17 @@ namespace {
 const double MIN_SHARE = 0.02;
 // ...and at least this many cases in absolute terms.
 const long MIN_COUNT = 200;
+// The stages behind the library's integer stage only see cases too wide for
+// it, which only the wide_span generator families (and a few others)
+// produce. Each must still decide at least this share of its predicate's
+// cases, and MIN_COUNT cases.
+const double MIN_FALL_THROUGH_SHARE = 0.005;
 
 bool stage_exists(int pred, int stage) { return stage != STAGE_A0 || pred == ORIENT2D; }
 
-void print_row(const char* label, long cases, const long* counts) {
+void print_row(const char* label, long cases, const long* counts, int num_stages) {
   std::printf("%-42s %8ld |", label, cases);
-  for (int s = 0; s < NUM_STAGES; s++) std::printf(" %6.2f", 100.0 * counts[s] / cases);
+  for (int s = 0; s < num_stages; s++) std::printf(" %6.2f", 100.0 * counts[s] / cases);
   std::printf("\n");
 }
 
@@ -55,20 +75,24 @@ int main(int argc, char** argv) {
     return 2;
   }
   initialize_implementations();
-  const Implementation& reference = reference_implementation();
+  // The build whose values the stage-recording build must reproduce.
+  const Implementation& uninstrumented =
+      library ? *find_implementation("library") : reference_implementation();
+  const int num_stages = library ? NUM_LIBRARY_STAGES : NUM_STAGES;
 
-  long totals[NUM_PREDS][NUM_STAGES] = {};
+  long totals[NUM_PREDS][NUM_LIBRARY_STAGES] = {};
   long cases[NUM_PREDS] = {};
   long unrecorded = 0, value_differences = 0, stage_differences = 0;
 
   std::printf("Share of cases decided by each stage of the %s, in percent (tier %s)\n", subject,
               tier->name);
-  std::printf("%-42s %8s | %6s %6s %6s %6s %6s %6s\n", "generator", "cases", "A0", "A", "B", "Bx",
-              "C", "D");
+  std::printf("%-42s %8s |", "generator", "cases");
+  for (int s = 0; s < num_stages; s++) std::printf(" %6s", STAGE_NAME[s]);
+  std::printf("\n");
   const Generator* current = nullptr;
-  long current_counts[NUM_STAGES] = {}, current_cases = 0;
+  long current_counts[NUM_LIBRARY_STAGES] = {}, current_cases = 0;
   auto flush = [&] {
-    if (current) print_row(current->name.c_str(), current_cases, current_counts);
+    if (current) print_row(current->name.c_str(), current_cases, current_counts, num_stages);
     std::memset(current_counts, 0, sizeof current_counts);
     current_cases = 0;
   };
@@ -84,13 +108,25 @@ int main(int argc, char** argv) {
       staged_value = staged_library_call(generator.pred, c, &stage);
       int reference_stage = -1;
       staged_reference_call(generator.pred, c, &reference_stage);
-      if (stage != reference_stage) stage_differences++;
+      // The stage the library must decide this case in (see the top).
+      const int width = width_of(c, NUM_COORDS[generator.pred]);
+      const bool narrow = width >= 0 && width <= INTEGER_STAGE_MAX_WIDTH;
+      const int expected_stage = integer_stage_precedes(generator.pred, reference_stage) && narrow
+                                     ? static_cast<int>(STAGE_I)
+                                     : reference_stage;
+      if (stage != expected_stage) {
+        if (stage_differences < 5) {
+          std::printf("WRONG STAGE in %s: decided by stage %d, expected %d (width %d)\n",
+                      generator.name.c_str(), stage, expected_stage, width);
+        }
+        stage_differences++;
+      }
     } else {
       staged_value = staged_reference_call(generator.pred, c, &stage);
     }
-    const double value = reference.call(generator.pred, c);
+    const double value = uninstrumented.call(generator.pred, c);
     if (std::memcmp(&staged_value, &value, sizeof value) != 0) value_differences++;
-    if (stage < 0 || stage >= NUM_STAGES) {
+    if (stage < 0 || stage >= num_stages) {
       unrecorded++;
       return;
     }
@@ -103,11 +139,11 @@ int main(int argc, char** argv) {
 
   std::printf("\nStage distribution per predicate: cases (percent)\n");
   std::printf("%-9s %8s", "predicate", "cases");
-  for (int s = 0; s < NUM_STAGES; s++) std::printf(" %15s", STAGE_NAME[s]);
+  for (int s = 0; s < num_stages; s++) std::printf(" %15s", STAGE_NAME[s]);
   std::printf("\n");
   for (int p = 0; p < NUM_PREDS; p++) {
     std::printf("%-9s %8ld", PRED_NAME[p], cases[p]);
-    for (int s = 0; s < NUM_STAGES; s++) {
+    for (int s = 0; s < num_stages; s++) {
       if (stage_exists(p, s)) {
         std::printf(" %7ld (%4.1f%%)", totals[p][s], 100.0 * totals[p][s] / cases[p]);
       } else {
@@ -119,12 +155,15 @@ int main(int argc, char** argv) {
 
   // The gate.
   for (int p = 0; p < NUM_PREDS; p++) {
-    for (int s = 0; s < NUM_STAGES; s++) {
+    for (int s = 0; s < num_stages; s++) {
       if (!stage_exists(p, s)) {
         CHECK(totals[p][s] == 0);
         continue;
       }
-      const bool enough = totals[p][s] >= MIN_COUNT && totals[p][s] >= MIN_SHARE * cases[p];
+      // In the library, the stages behind stage I are the fall-through path.
+      const bool fall_through = library && integer_stage_precedes(static_cast<Pred>(p), s);
+      const double min_share = fall_through ? MIN_FALL_THROUGH_SHARE : MIN_SHARE;
+      const bool enough = totals[p][s] >= MIN_COUNT && totals[p][s] >= min_share * cases[p];
       if (!enough) {
         std::printf("STAGE UNDER-COVERED: %s stage %s decided only %ld of %ld cases\n",
                     PRED_NAME[p], STAGE_NAME[s], totals[p][s], cases[p]);
@@ -135,12 +174,13 @@ int main(int argc, char** argv) {
   if (unrecorded) std::printf("%ld calls returned without recording a stage\n", unrecorded);
   CHECK(unrecorded == 0);
   if (value_differences) {
-    std::printf("%ld values differ between the stage-recording and the pristine build\n",
+    std::printf("%ld values differ between the stage-recording build and the build it "
+                "instruments\n",
                 value_differences);
   }
   CHECK(value_differences == 0);
   if (stage_differences) {
-    std::printf("%ld cases are decided by a different stage than in the reference\n",
+    std::printf("%ld cases are not decided by the stage the library must decide them in\n",
                 stage_differences);
   }
   CHECK(stage_differences == 0);

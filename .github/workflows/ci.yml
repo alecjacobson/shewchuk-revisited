@@ -38,7 +38,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure -j 4
       - name: Stage tables, hashes, constants and negative controls
         if: always()
-        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|negative_control.default_flags|differential.library|library.lto_fast_math_caller|negative_control.lto_fast_math_caller|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
+        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|negative_control.default_flags|differential.library|differential.library_expansion_only|differential.library_portable|integer_stage.checked|integer_stage.checked_portable|integer_stage.widths|library.lto_fast_math_caller|negative_control.lto_fast_math_caller|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
       # No performance gating: this only shows that the harness runs here and
       # which counter backend it found (hosted runners usually have none).
       - name: Benchmark smoke run
@@ -128,7 +128,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure -j 3
       - name: Stage tables, hashes, constants and negative controls
         if: always()
-        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|negative_control.default_flags|differential.library|library.lto_fast_math_caller|negative_control.lto_fast_math_caller|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
+        run: ctest --test-dir build -R "^(stages.coverage|differential.reference|negative_control.fp_contract|negative_control.default_flags|differential.library|differential.library_expansion_only|differential.library_portable|integer_stage.checked|integer_stage.checked_portable|integer_stage.widths|library.lto_fast_math_caller|negative_control.lto_fast_math_caller|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
       # No performance gating: this only shows that the harness runs here and
       # which counter backend it found (hosted runners usually have none).
       - name: Benchmark smoke run
@@ -163,7 +163,7 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure -j 4
       - name: Stage tables, hashes, constants and negative controls
         if: always()
-        run: ctest --test-dir build -C Release -R "^(stages.coverage|differential.reference|negative_control.fp_contract|negative_control.default_flags|differential.library|library.lto_fast_math_caller|negative_control.lto_fast_math_caller|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
+        run: ctest --test-dir build -C Release -R "^(stages.coverage|differential.reference|negative_control.fp_contract|negative_control.default_flags|differential.library|differential.library_expansion_only|differential.library_portable|integer_stage.checked|integer_stage.checked_portable|integer_stage.widths|library.lto_fast_math_caller|negative_control.lto_fast_math_caller|library.stages|library.no_fma|negative_control.no_fma|library.constants)$" --verbose
       # No performance gating: this only shows that the harness runs here and
       # which counter backend it found (hosted runners usually have none).
       - name: Benchmark smoke run

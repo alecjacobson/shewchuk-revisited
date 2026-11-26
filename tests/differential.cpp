@@ -4,7 +4,9 @@
 //   1. its sign equals the exact oracle's (the contract: zero mismatches);
 //   2. its sign equals the pristine reference's (control);
 //   3. its value equals the reference's bit for bit (informational, and
-//      mandatory for changes declared refactor-only: --require-identical).
+//      mandatory for changes declared refactor-only: --require-identical);
+//   4. with --integer-stage, the value contract of the library's exact integer
+//      stage (see integer_stage_value() below).
 // It also hashes the corpus and the returned values and can compare them with
 // the hashes recorded in corpus.h (--check-golden).
 //
@@ -20,6 +22,8 @@
 #include "generators.h"
 #include "implementations.h"
 #include "oracle.h"
+#include "stages.h"
+#include "width.h"
 
 using namespace shewchuk_test;
 
@@ -37,6 +41,12 @@ void usage() {
       "                           for the reference and with --require-identical,\n"
       "                           the value hash does too\n"
       "  --require-identical      fail unless every value equals the reference's\n"
+      "  --integer-stage          the library with its exact integer stage: fail unless\n"
+      "                           every value decided before the integer stage equals\n"
+      "                           the reference's, every other value of a case narrow\n"
+      "                           enough for the integer stage is exactly -1, 0 or +1,\n"
+      "                           and every remaining value equals the reference's; with\n"
+      "                           --check-golden the value hash must be the recorded one\n"
       "  --expect-mismatch        negative control: pass only if the implementation\n"
       "                           DISAGREES with the oracle at least once\n"
       "  --dump-sample            print the corpus with oracle signs and exit\n"
@@ -60,7 +70,33 @@ struct Totals {
   long oracle_mismatches = 0;     // wrong or non-finite result
   long reference_mismatches = 0;  // sign differs from the reference
   long value_differences = 0;     // value bits differ from the reference
+  long contract_violations = 0;   // --integer-stage: not the value the contract fixes
+  long integer_stage_cases = 0;   // --integer-stage: cases the integer stage must decide
 };
+
+// The value the library must return now that it has the exact integer stage
+// (--integer-stage). The stage knows only the sign, so the library is no
+// longer bit-identical to the 1996 code, and this is the whole difference:
+//   * a call decided by a stage that comes before the integer stage (the
+//     first filter; for orient2d also stages B, Bx and C: see
+//     integer_stage_precedes() in width.h) returns the reference's value, bit
+//     for bit. Which stage decides is found with the stage-instrumented
+//     reference;
+//   * any other call whose coordinates are narrow enough (width.h) is decided
+//     by the integer stage and returns exactly -1.0, +0.0 or +1.0, the exact
+//     sign;
+//   * any other call falls through to the 1996 stages and returns the
+//     reference's value, bit for bit.
+// `*by_integer_stage` reports whether the second rule applied.
+double integer_stage_value(Pred pred, const double* c, double reference_value, int exact_sign,
+                           bool* by_integer_stage) {
+  int reference_stage = -1;
+  staged_reference_call(pred, c, &reference_stage);
+  const int width = width_of(c, NUM_COORDS[pred]);
+  *by_integer_stage = integer_stage_precedes(pred, reference_stage) && width >= 0 &&
+                      width <= INTEGER_STAGE_MAX_WIDTH;
+  return *by_integer_stage ? static_cast<double>(exact_sign) : reference_value;
+}
 
 }  // namespace
 
@@ -69,6 +105,7 @@ int main(int argc, char** argv) {
   const Tier* tier = find_tier("quick");
   long custom_cases = 0;
   bool check_golden = false, require_identical = false, expect_mismatch = false;
+  bool integer_stage = false;
   bool dump_sample = false;
 
   for (int i = 1; i < argc; i++) {
@@ -92,6 +129,8 @@ int main(int argc, char** argv) {
       check_golden = true;
     } else if (arg == "--require-identical") {
       require_identical = true;
+    } else if (arg == "--integer-stage") {
+      integer_stage = true;
     } else if (arg == "--expect-mismatch") {
       expect_mismatch = true;
     } else if (arg == "--dump-sample") {
@@ -111,6 +150,10 @@ int main(int argc, char** argv) {
       usage();
       return 2;
     }
+  }
+  if (integer_stage && require_identical) {
+    std::printf("--integer-stage and --require-identical exclude each other\n");
+    return 2;
   }
   if (custom_cases && check_golden) {
     std::printf("--check-golden needs a tier, not --cases-per-generator\n");
@@ -171,6 +214,23 @@ int main(int argc, char** argv) {
     }
     if (sign_of(value) != sign_of(reference_value)) t.reference_mismatches++;
     if (bits_of(value) != bits_of(reference_value)) t.value_differences++;
+    if (integer_stage) {
+      bool by_integer_stage;
+      const double contract =
+          integer_stage_value(pred, c, reference_value, expected, &by_integer_stage);
+      if (by_integer_stage) t.integer_stage_cases++;
+      if (bits_of(value) != bits_of(contract)) {
+        t.contract_violations++;
+        if (reports < max_reports) {
+          reports++;
+          std::printf("  VALUE CONTRACT VIOLATED in %s: returned %a, the contract says %a (%s)\n",
+                      generator.name.c_str(), value, contract,
+                      by_integer_stage ? "the exact sign from the integer stage"
+                                       : "the reference's value");
+          print_case(pred, c);
+        }
+      }
+    }
   });
 
   std::printf("implementation: %s (%s)\n", impl->name, impl->description);
@@ -187,11 +247,18 @@ int main(int argc, char** argv) {
     sum.oracle_mismatches += t.oracle_mismatches;
     sum.reference_mismatches += t.reference_mismatches;
     sum.value_differences += t.value_differences;
+    sum.contract_violations += t.contract_violations;
+    sum.integer_stage_cases += t.integer_stage_cases;
   }
   std::printf("%-9s %10ld %16ld %18ld %19ld\n", "total", sum.cases, sum.oracle_mismatches,
               sum.reference_mismatches, sum.value_differences);
   std::printf("corpus hash: %016" PRIx64 "\n", corpus_hash.value());
   std::printf("value hash:  %016" PRIx64 "\n", value_hash.value());
+  if (integer_stage) {
+    std::printf("integer-stage value contract: %ld violations; the integer stage decides %ld "
+                "of the %ld cases\n",
+                sum.contract_violations, sum.integer_stage_cases, sum.cases);
+  }
 
   bool ok = true;
   if (check_golden) {
@@ -209,6 +276,18 @@ int main(int argc, char** argv) {
                   tier->reference_value_hash);
       ok = false;
     }
+    // The values of the library with its integer stage are fixed by the
+    // contract above, so their hash is recorded too.
+    if (integer_stage && value_hash.value() != tier->library_value_hash) {
+      std::printf("FAIL: value hash differs from the recorded library value hash %016" PRIx64 "\n",
+                  tier->library_value_hash);
+      ok = false;
+    }
+  }
+  if (integer_stage && sum.contract_violations != 0) {
+    std::printf("FAIL: %ld values are not the ones the integer-stage contract fixes\n",
+                sum.contract_violations);
+    ok = false;
   }
   if (require_identical && sum.value_differences != 0) {
     std::printf("FAIL: %ld values differ from the reference\n", sum.value_differences);

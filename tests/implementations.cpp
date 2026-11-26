@@ -17,6 +17,19 @@ SHEWCHUK_REF_DECLARE(shewchuk_contracted_)
 #if SHEWCHUK_HAVE_DEFAULT_FLAGS_REFERENCE
 SHEWCHUK_REF_DECLARE(shewchuk_default_flags_)
 #endif
+
+// Test-only builds of the library (src/predicates.cpp) under other names
+// (see tests/CMakeLists.txt, shewchuk_add_library_variant).
+#define SHEWCHUK_TEST_DECLARE_LIBRARY(prefix)                                          \
+  double prefix##orient2d(const double* pa, const double* pb, const double* pc);       \
+  double prefix##orient3d(const double* pa, const double* pb, const double* pc,        \
+                          const double* pd);                                           \
+  double prefix##incircle(const double* pa, const double* pb, const double* pc,        \
+                          const double* pd);                                           \
+  double prefix##insphere(const double* pa, const double* pb, const double* pc,        \
+                          const double* pd, const double* pe);
+SHEWCHUK_TEST_DECLARE_LIBRARY(shewchuk_expansion_only_)
+SHEWCHUK_TEST_DECLARE_LIBRARY(shewchuk_portable_)
 }
 
 namespace shewchuk_test {
@@ -28,7 +41,8 @@ constexpr bool same_stage(int library_stage, int suite_stage) {
 }
 static_assert(same_stage(SHEWCHUK_STAGE_A0, STAGE_A0) && same_stage(SHEWCHUK_STAGE_A, STAGE_A) &&
               same_stage(SHEWCHUK_STAGE_B, STAGE_B) && same_stage(SHEWCHUK_STAGE_BX, STAGE_BX) &&
-              same_stage(SHEWCHUK_STAGE_C, STAGE_C) && same_stage(SHEWCHUK_STAGE_D, STAGE_D));
+              same_stage(SHEWCHUK_STAGE_C, STAGE_C) && same_stage(SHEWCHUK_STAGE_D, STAGE_D) &&
+              same_stage(SHEWCHUK_STAGE_I, STAGE_I));
 
 // The 1996 functions take non-const pointers but never write through them.
 double* unconst(const double* p) { return const_cast<double*>(p); }
@@ -132,12 +146,24 @@ const std::vector<Implementation>& all_implementations() {
        always_available},
       {"reference_staged", "the same file with stage-recording instrumentation (test only)",
        staged_orient2d, staged_orient3d, staged_incircle, staged_insphere, always_available},
-      {"library", "the library (src/predicates.cpp): bit-identical port of the reference",
+      {"library",
+       "the library (src/predicates.cpp): the 1996 filter, the exact integer stage, then the "
+       "1996 adaptive stages",
        shewchuk_orient2d, shewchuk_orient3d, shewchuk_incircle, shewchuk_insphere,
        always_available},
       {"library_hooked", "the library's test-only build with stage recording",
        shewchuk_hooked_orient2d, shewchuk_hooked_orient3d, shewchuk_hooked_incircle,
        shewchuk_hooked_insphere, always_available},
+      {"library_expansion_only",
+       "the library built without its integer stage (test only): bit-identical port of the "
+       "reference",
+       shewchuk_expansion_only_orient2d, shewchuk_expansion_only_orient3d,
+       shewchuk_expansion_only_incircle, shewchuk_expansion_only_insphere, always_available},
+      {"library_portable",
+       "the library with the portable 64x64->128 multiplication forced in its integer stage "
+       "(test only)",
+       shewchuk_portable_orient2d, shewchuk_portable_orient3d, shewchuk_portable_incircle,
+       shewchuk_portable_insphere, always_available},
 #if SHEWCHUK_HAVE_CONTRACTED_REFERENCE
       {"reference_contracted",
        "NEGATIVE CONTROL: the same file built with -O2 -ffp-contract=fast; must be wrong",

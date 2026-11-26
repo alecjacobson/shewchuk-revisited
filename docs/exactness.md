@@ -5,12 +5,20 @@ the argument is written down. The rule of the project: the sign of every
 result is exactly the sign of the determinant, and no change may weaken that.
 
 **Current state.** The library (`src/predicates.cpp`) is a port of the four
-adaptive predicates of the 1996 `predicates.c`. Apart from the rewrites listed
-under [The filters](#the-filters), which cannot change a returned
-value, it performs the same floating-point operations in the same order: on
-the whole test corpus every returned value is bit-identical to the pristine
-file's (see [testing.md](testing.md)). Every claim below is therefore the 1996
-paper's claim, inherited unchanged. Nothing here has been re-derived yet.
+adaptive predicates of the 1996 `predicates.c`, with one addition: an exact
+integer stage (stage I, `src/integer_stage.h`) that is tried before the
+adaptive stages B, C and D (for `orient2d`: before stage D).
+
+- Apart from the rewrites listed under [The filters](#the-filters), which
+  cannot change a returned value, the floating-point stages perform the same
+  operations in the same order as the 1996 code: built without the integer
+  stage, the library returns values bit-identical to the pristine file's on
+  the whole test corpus, and with it, every value a floating-point stage
+  returns still is (see [testing.md](testing.md)). Their claims below are
+  therefore the 1996 paper's claims, inherited unchanged. Nothing there has
+  been re-derived yet.
+- The integer stage is new, and its claim is proved in
+  [proofs/integer-stage.md](proofs/integer-stage.md).
 
 "The paper" is J. R. Shewchuk, *Adaptive Precision Floating-Point Arithmetic
 and Fast Robust Geometric Predicates*, Discrete & Computational Geometry
@@ -27,7 +35,12 @@ Every claim holds only if all of these do.
 | 2 | Operations are evaluated as written: no contraction into fused multiply-add, no reassociation, no extended precision. | The translation unit is compiled with flags set by the project (`cmake/StrictFloatingPoint.cmake`), plus `#error` on fast-math macros. Checked after the build by `library.no_fma` (no fused multiply-add in the object code) and by the value hash. |
 | 3 | No intermediate result overflows or underflows. The paper does not analyse overflow or underflow; it states that the four predicates neither overflow nor underflow for inputs whose exponents are in [-142, 201]. | Not checked at run time. The test corpus stays inside this domain. Behaviour outside it is not claimed; see [Input domain](#input-domain). |
 | 4 | Gradual underflow is on (no flush-to-zero, no denormals-are-zero mode), so that `x - y == 0` only if `x == y`. Inside the domain of assumption 3 no subnormal number should arise at all; this assumption is what keeps the first sign tests meaningful at the edge. | The caller's responsibility; not checked. |
-| 5 | Inputs are finite. | Not checked; NaN and infinities give unspecified results. |
+| 5 | Inputs are finite. | Not checked by the floating-point stages; NaN and infinities give unspecified results. The integer stage detects them and declines, so that their results are the ones of the floating-point stages alone. |
+
+The integer stage needs none of these assumptions: it uses no floating-point
+arithmetic. It needs only that a `double` is an IEEE 754 binary64 (checked at
+compile time). But it runs only when the stages before it have not decided,
+so the predicates as a whole still rest on assumptions 1 to 5.
 
 ### Callers' flags and link-time optimization
 
@@ -88,6 +101,17 @@ A stage that is "certified" returns its approximation `det` only if
 `|det| >= errbound`, where `errbound` bounds the distance between `det` and
 the exact determinant; then `det` has the exact sign. Otherwise the next
 stage runs.
+
+### The integer stage (I), all four predicates
+
+| Stage | Claim | Bound | Proof |
+|---|---|---|---|
+| I | Exact, or declines. Scales the coordinates by one power of two to integers; if their width `W` (bit length of the largest scaled magnitude) is at most 189, evaluates the determinant in fixed-width integers (`W <= 61`: one 64-bit limb per coordinate difference, `<= 125`: two, `<= 189`: three) and returns its sign as -1.0, 0.0 or +1.0. Declines, leaving the call to the next stage, if `W > 189` or a coordinate is not finite. Exact for all finite inputs it accepts, subnormals included. | none | [proofs/integer-stage.md](proofs/integer-stage.md) |
+
+Position: behind stage A for `orient3d`, `incircle` and `insphere`; behind
+stage C for `orient2d` (its stages B and C are cheaper than the integer
+stage). The stages listed after that position in the tables below run only
+when stage I declines.
 
 ### orient2d
 
@@ -279,9 +303,14 @@ by the caller.
 
 ## What is and is not established
 
-- Established by test: the library returns the reference's values bit for
-  bit, and the reference's signs equal an exact oracle's on a corpus that
-  reaches every stage above.
+- Established by test: built without the integer stage the library returns
+  the reference's values bit for bit; with it, every value is the
+  reference's or, where the integer stage decides, exactly the oracle's sign;
+  and the reference's signs equal an exact oracle's on a corpus that reaches
+  every stage above, including stages B to D with inputs too wide for the
+  integer stage.
+- Proved (and tested): the integer stage, in
+  [proofs/integer-stage.md](proofs/integer-stage.md).
 - Not established by test, and not re-proved here: that each error-bound
   constant is large enough. A loosened constant can pass every sign test
   (issue #11). Until independent derivations exist under `docs/proofs/`, the
@@ -290,7 +319,15 @@ by the caller.
   or a buffer capacity must update this ledger and add its derivation
   (issue #11).
 
-## Differences from the 1996 code that are not arithmetic
+## Differences from the 1996 code
+
+- The integer stage (above). It changes returned magnitudes, never signs: a
+  call it decides returns -1.0, 0.0 or +1.0 where the 1996 code returns an
+  approximation of the determinant.
+- Stage D of `orient2dadapt()` is a function of its own
+  (`orient2d_exact_stages()`), with the same operations in the same order.
+
+Not arithmetic:
 
 - The constants are compile-time values. Each is checked against the formula
   `exactinit()` uses and against the globals of the pristine build.

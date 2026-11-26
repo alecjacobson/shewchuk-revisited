@@ -12,9 +12,9 @@ cmake --build build -j 10
 ctest --test-dir build --output-on-failure -j 4
 ```
 
-The whole quick tier takes a few seconds in Release (under 20 s in Debug). No
-test process uses more than a few MB of memory: the corpus is generated as a
-stream and never stored.
+The whole quick tier takes under a minute in Release. No test process uses
+more than a few MB of memory: the corpus is generated as a stream and never
+stored.
 
 Options:
 
@@ -46,9 +46,13 @@ Tests of the library (`src/predicates.cpp`):
 
 | Test | What it proves |
 |---|---|
-| `differential.library` | zero sign mismatches against the oracle; every value equals the reference's bit for bit; the value hash equals the recorded reference hash |
+| `differential.library_expansion_only` | the library built without its integer stage is a refactoring of the 1996 code: zero sign mismatches, every value equals the reference's bit for bit, the value hash equals the recorded reference hash |
+| `differential.library` | the shipped library: zero sign mismatches against the oracle, and every value is the one the integer-stage contract fixes (below); the value hash equals the recorded library hash |
 | `differential.library_hooked` | the same for the library's test-only build |
-| `library.stages` | every stage of the library decides at least 2% of its cases, and every single case is decided by the same stage as in the reference. For orient2d the library has one test where the reference has two (A0 and A); a call that test decides is counted as A0 if its two products have opposite signs or one is zero, the class the reference decides in A0, and as A otherwise. A reference-A0 case that the library handed to `orient2dadapt()` would be reported as B, Bx, C or D and fail |
+| `differential.library_portable` | the same, with the same hash, for the library built with the integer stage's portable 64x64->128 multiplication (the one compilers without a 128-bit integer use) |
+| `library.stages` | every stage of the library decides enough cases: at least 2% for the stages before the integer stage and for the integer stage, at least 0.5% (and 200 cases) for the stages behind it, which only inputs too wide for the integer stage reach. Every single case is decided by the stage it must be decided in: the reference's stage, or the integer stage if the reference's stage comes after it and the case's width is at most 189. For orient2d the library has one first test where the reference has two (A0 and A); a call that test decides is counted as A0 if its two products have opposite signs or one is zero, the class the reference decides in A0, and as A otherwise |
+| `integer_stage.unit`, `.portable`, `.checked`, `.checked_portable` | the integer stage on its own (`tests/test_integer_stage.cpp`), in four builds: default and portable limb arithmetic, each with and without run-time verification of the proof's bounds. See below |
+| `integer_stage.widths` | the bit widths of `docs/proofs/integer-stage.md`, re-derived with exact integers by `tools/integer_stage_widths.py`, agree with the formulas in `src/integer_stage.h` and fit the limbs of every tier |
 | `library.orient2d_first_test` | the library's merged first test of orient2d returns the reference's value, in the reference's stage, on 234256 combinations of special products the corpus does not contain: zeros of both signs, equal and opposite products, subnormal, huge, overflowed to infinity |
 | `library.input_domain` | on a slice of the corpus rescaled by powers of two: exact at the edge of the supported domain (coordinate exponents in [-142, 201]) and up to the observed per-predicate limits; one step beyond them, overflow gives NaN or an infinity and never a finite wrong sign, underflow gives silently wrong signs; a NaN coordinate gives NaN and an infinite one never a finite value. The part beyond the domain records current behaviour, it is not a contract (docs/exactness.md, "Input domain") |
 | `library.expansions` | `fast_expansion_sum_zeroelim`, `scale_expansion_zeroelim` and `estimate` return the same components as the reference's routines on random and adversarial expansions, up to the largest lengths any predicate uses |
@@ -63,6 +67,53 @@ Tests of the library (`src/predicates.cpp`):
 | `library.refuses_x87` | compiled for x87 extended-precision arithmetic (the build's flags plus `-mfpmath=387`), `src/predicates.cpp` stops at its `#error` on `FLT_EVAL_METHOD` (skipped where the compiler has no such mode: not x86, or clang on x86-64) |
 
 A skipped test is reported as skipped, never as passed.
+
+## The integer stage and the value contract
+
+The library is no longer bit-identical to the 1996 code: its exact integer
+stage (`src/integer_stage.h`) knows only the sign and returns -1.0, 0.0 or
++1.0. What the suite requires instead, with `differential --integer-stage`:
+
+- zero sign mismatches against the oracle, as for every implementation;
+- per case, exactly this value: the reference's, bit for bit, if the
+  reference decides the case in a stage that comes before the integer stage
+  (A0, A; for `orient2d` also B, Bx, C) or if the case's width exceeds 189
+  (it falls through to the 1996 stages); otherwise the oracle's sign as
+  -1.0, +0.0 or +1.0. The deciding stage comes from the stage-instrumented
+  reference and the width from `tests/width.h`, which shares no code with the
+  library;
+- the hash of all these values equals the one recorded in `tests/corpus.h`.
+
+The recorded reference hash still binds the reference itself and the library
+built without the integer stage (`differential.library_expansion_only`).
+
+`test_integer_stage` calls the stage directly (the header is compiled into
+the test):
+
+- limb arithmetic against the oracle's big integers;
+- the scaling of doubles to integers against an independent decomposition:
+  zeros, negative zero, subnormals, the largest doubles, random bit patterns
+  from the whole format, infinities and NaNs;
+- force-stage: on every corpus case the stage, as the sole decider, returns
+  the oracle's sign or declines; it declines exactly the cases wider than
+  189, uses the tier the width selects, and every tier and the refusal see
+  at least 2% of each predicate's cases;
+- worst-case magnitudes: every coordinate at the largest value of the width,
+  with every sign pattern, at widths exactly at each tier's limit and one
+  past it (and around the limb boundaries), anywhere in the exponent range of
+  a double;
+- a negative control: a tier forced onto inputs 5 bits too wide returns wrong
+  signs;
+- non-finite coordinates are declined and the library returns what it
+  returns without the stage;
+- in the checked builds (`SHEWCHUK_INTEGER_STAGE_CHECKED`): no addition or
+  subtraction overflowed, every intermediate stayed within the bit width the
+  proof states for it, the worst-case inputs came within 5 bits of every
+  bound, and the negative control tripped the checks.
+
+The `wide_span` generator families exist for the fall-through path: their
+coordinates come from two exponent bands 140 binades apart, so the integer
+stage declines them and stages B, Bx, C and D of the library stay covered.
 
 ## Layout
 
@@ -81,6 +132,12 @@ A skipped test is reported as skipped, never as passed.
   `SHEWCHUK_PREDICATES_TEST_HOOKS`: different symbol names, a record of the
   stage that decided each call, and exported expansion routines. None of it
   exists in the shipped library.
+- Two more test-only builds of the same source under other symbol names
+  (`tests/CMakeLists.txt`): `library_expansion_only`
+  (`SHEWCHUK_PREDICATES_NO_INTEGER_STAGE`) and `library_portable`
+  (`SHEWCHUK_INTEGER_STAGE_PORTABLE`).
+- `tests/width.h`: the width of a case and the position of the integer stage,
+  independent of the library.
 
 ## Sanitizers
 
@@ -103,13 +160,15 @@ itself (a small AddressSanitizer quarantine keeps each test process around
 Add one entry to the table in `tests/implementations.cpp` and one
 `differential.<name>` test in `tests/CMakeLists.txt`. Use `--require-identical`
 if the change is declared refactor-only (values must equal the reference's bit
-for bit).
+for bit), and `--integer-stage` if it must return the library's values.
 
 ## The recorded hashes
 
-`tests/corpus.h` records, per tier, a hash of the generated inputs and a hash
-of the values the reference returns. With contraction off they are the same
-for every compiler, optimization level and platform tested. If
-`differential.reference` reports a different hash on a new platform, that is a
-finding to report, not a number to update. Update the hashes only when the
-generators change on purpose.
+`tests/corpus.h` records, per tier, a hash of the generated inputs, a hash of
+the values the reference returns, and a hash of the values the library
+returns. With contraction off they are the same for every compiler,
+optimization level and platform tested. If `differential.reference` reports a
+different hash on a new platform, that is a finding to report, not a number
+to update. Update the hashes only when the generators change on purpose (the
+library's also when a change to the library is meant to change returned
+values, which needs its own justification).
