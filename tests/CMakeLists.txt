@@ -344,9 +344,9 @@ foreach(name geogram cgal indirect)
       differential --impl ${name} --tier quick --check-golden --comparator)
   endif()
 endforeach()
-if(TARGET shewchuk_comparator_lenthe)
-  shewchuk_add_test(comparator.lenthe
-    differential --impl lenthe --tier quick --check-golden --comparator --known-wrong)
+if(TARGET shewchuk_comparator_geometric_predicates)
+  shewchuk_add_test(comparator.geometric_predicates
+    differential --impl geometric_predicates --tier quick --check-golden --comparator --known-wrong)
 endif()
 
 # The integer stage on its own; see test_integer_stage.cpp.

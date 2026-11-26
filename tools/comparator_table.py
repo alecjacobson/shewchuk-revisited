@@ -31,7 +31,7 @@ COLUMNS = [
     ("indirect", "Indirect_Predicates"),
     ("geogram", "Geogram PCK"),
     ("cgal", "CGAL EPICK"),
-    ("lenthe", "GeometricPredicates"),
+    ("geometric_predicates", "GeometricPredicates"),
     ("gmp_rational", "GMP rationals"),
 ]
 WORKLOADS = ["uniform", "mix_easy", "mix_surface", "stage_D", "wide_exponents"]
@@ -80,14 +80,14 @@ def table():
             for workload in WORKLOADS:
                 entries = [data.get((predicate, workload)) for _, data in columns]
                 checked = [e["cycles"] for e in entries if e is not None and not mark(e)]
-                best = min(checked)
+                best = number(min(checked))  # ties at the printed precision are all bold
                 cells = []
                 for entry in entries:
                     if entry is None:
                         cells.append("-")
                         continue
                     text = number(entry["cycles"])
-                    if not mark(entry) and entry["cycles"] == best:
+                    if not mark(entry) and text == best:
                         text = f"**{text}**"
                     cells.append(text + mark(entry))
                 lines.append(f"| `{predicate}` | `{workload}` | " + " | ".join(cells) + " |")

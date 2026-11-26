@@ -274,13 +274,14 @@ const std::vector<Implementation>& all_implementations() {
        shewchuk_comparator_indirect_incircle, shewchuk_comparator_indirect_insphere,
        indirect_unavailable_reason, true},
 #endif
-#if SHEWCHUK_HAVE_COMPARATOR_LENTHE
-      {"lenthe",
+#if SHEWCHUK_HAVE_COMPARATOR_GEOMETRIC_PREDICATES
+      {"geometric_predicates",
        "COMPARATOR: GeometricPredicates, predicates::adaptive "
-       "(" SHEWCHUK_COMPARATOR_LENTHE_BUILD ")",
-       shewchuk_comparator_lenthe_orient2d, shewchuk_comparator_lenthe_orient3d,
-       shewchuk_comparator_lenthe_incircle, shewchuk_comparator_lenthe_insphere,
-       always_available, true},
+       "(" SHEWCHUK_COMPARATOR_GEOMETRIC_PREDICATES_BUILD ")",
+       shewchuk_comparator_geometric_predicates_orient2d,
+       shewchuk_comparator_geometric_predicates_orient3d,
+       shewchuk_comparator_geometric_predicates_incircle,
+       shewchuk_comparator_geometric_predicates_insphere, always_available, true},
 #endif
   };
   return table;

@@ -227,20 +227,21 @@ endif()
 # --- GeometricPredicates (a C++ template port of the 1996 code) --------------
 # Header-only. Upstream names no compiler flags; it computes with the same
 # error-free transformations as the 1996 code, so it gets the flag those need.
-option(SHEWCHUK_COMPARATOR_LENTHE "Build the GeometricPredicates comparator" ON)
-if(SHEWCHUK_COMPARATOR_LENTHE)
-  set(lenthe_commit ebc50200a90684e045419ce1bb634524eb63704c)
+option(SHEWCHUK_COMPARATOR_GEOMETRIC_PREDICATES
+  "Build the GeometricPredicates comparator" ON)
+if(SHEWCHUK_COMPARATOR_GEOMETRIC_PREDICATES)
+  set(geometric_predicates_commit ebc50200a90684e045419ce1bb634524eb63704c)
   shewchuk_fetch_comparator_source(shewchuk_geometric_predicates
-    "https://github.com/wlenthe/GeometricPredicates/archive/${lenthe_commit}.tar.gz"
+    "https://github.com/wlenthe/GeometricPredicates/archive/${geometric_predicates_commit}.tar.gz"
     1a97808a3eb9559208b06ff306a81172c96d7f18bc393848aaa696362a59205a)
   if(EXISTS "${shewchuk_geometric_predicates_SOURCE_DIR}/predicates.h")
-    shewchuk_add_comparator(lenthe
-      VERSION "GeometricPredicates ${lenthe_commit}"
+    shewchuk_add_comparator(geometric_predicates
+      VERSION "GeometricPredicates ${geometric_predicates_commit}"
       FLAGS ${no_contraction})
-    target_include_directories(shewchuk_comparator_lenthe SYSTEM PRIVATE
+    target_include_directories(shewchuk_comparator_geometric_predicates SYSTEM PRIVATE
       "${shewchuk_geometric_predicates_SOURCE_DIR}")
   else()
-    message(STATUS "Comparator lenthe: SKIPPED (the download is missing)")
+    message(STATUS "Comparator geometric_predicates: SKIPPED (the download is missing)")
   endif()
 endif()
 

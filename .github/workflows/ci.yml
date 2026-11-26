@@ -156,7 +156,7 @@ jobs:
       - name: Benchmark smoke run of every comparator
         if: always()
         run: |
-          for name in gmp_rational geogram cgal indirect lenthe; do
+          for name in gmp_rational geogram cgal indirect geometric_predicates; do
             build/bench/bench_predicates --impl $name --smoke --out build/smoke-$name.json
           done
 
