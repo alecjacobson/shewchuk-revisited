@@ -1,8 +1,10 @@
 /* Adaptive exact geometric predicates (after Shewchuk, 1996). C and C++.
  *
  * Each function returns a double whose SIGN is exact: it is the sign of the
- * determinant below evaluated without any roundoff. The magnitude is only an
- * approximation of the determinant and must not be relied on.
+ * determinant below evaluated without any roundoff. Only the sign means
+ * anything. The magnitude must not be relied on: depending on which internal
+ * stage decides a call, the value is an approximation of the determinant or
+ * just -1.0, 0.0 or +1.0.
  *
  *   orient2d(a, b, c)        > 0 if a, b, c are in counterclockwise order,
  *                            < 0 if clockwise, 0 if collinear

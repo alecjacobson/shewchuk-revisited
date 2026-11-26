@@ -23,7 +23,8 @@ enum {
   SHEWCHUK_STAGE_B = 2,  /* second filter (errboundB) */
   SHEWCHUK_STAGE_BX = 3, /* all coordinate-difference tails are zero */
   SHEWCHUK_STAGE_C = 4,  /* third filter (errboundC) */
-  SHEWCHUK_STAGE_D = 5   /* fully exact */
+  SHEWCHUK_STAGE_D = 5,  /* fully exact (expansions) */
+  SHEWCHUK_STAGE_I = 6   /* exact integer stage (not in the 1996 code) */
 };
 
 #ifdef __cplusplus

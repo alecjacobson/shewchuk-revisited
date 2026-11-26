@@ -65,14 +65,16 @@ int run(double (*call)(int, const double*), bool expect_exact) {
 
   std::printf("%ld cases, %ld wrong signs\n", cases, wrong);
   std::printf("corpus hash: %016" PRIx64 "\n", corpus_hash.value());
-  std::printf("value hash:  %016" PRIx64 " (recorded reference value hash: %016" PRIx64 ")\n",
-              value_hash.value(), tier.reference_value_hash);
+  std::printf("value hash:  %016" PRIx64 " (recorded library value hash: %016" PRIx64 ")\n",
+              value_hash.value(), tier.library_value_hash);
 
   if (corpus_hash.value() != tier.corpus_hash) {
     std::printf("FAIL: corpus hash differs from the recorded %016" PRIx64 "\n", tier.corpus_hash);
     return 1;
   }
-  const bool exact = wrong == 0 && value_hash.value() == tier.reference_value_hash;
+  // The library's own recorded values (corpus.h): the reference's, except
+  // where its exact integer stage decides.
+  const bool exact = wrong == 0 && value_hash.value() == tier.library_value_hash;
   if (expect_exact) {
     if (!exact) {
       std::printf("FAIL: the caller's flags or link-time optimization changed the library's "

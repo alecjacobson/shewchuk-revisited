@@ -101,6 +101,16 @@ when all difference tails are zero; D: the exact stage). The inputs come from
 the generator families of the test corpus (`tests/generators.cpp`), looked up
 by name.
 
+The tags name the reference's stages. The library decides most inputs tagged
+B, Bx, C or D (for `orient2d`: those tagged D) in its exact integer stage
+instead, in the tier their width selects (`docs/proofs/integer-stage.md`):
+the `near_degenerate`, `degenerate_*`, `stage_B`, `stage_Bx` and `stage_C`
+inputs are at most 64 bits wide (tier 1, a few in tier 2) and the `stage_D`
+inputs 88 to 126 bits (tier 2, a few in tier 3). Of the `wide_exponents`
+inputs that the first filter leaves open, all of `insphere`'s fit tier 3,
+15% of `incircle`'s do, and almost none of `orient2d`'s and `orient3d`'s:
+those are too wide and fall through to the 1996 stages.
+
 | Workload | Definition |
 |---|---|
 | `uniform` | coordinates uniform in [-1, 1) |

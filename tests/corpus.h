@@ -20,13 +20,19 @@ struct Tier {
   // level and architecture tested so far; the control for refactor-only
   // changes, which must reproduce it bit for bit.
   std::uint64_t reference_value_hash;
+  // Hash of every value the library returns. It differs from the reference's
+  // only through the exact integer stage, whose effect on the values is fixed
+  // (differential.cpp, integer_stage_value()), so it is as portable as the
+  // reference's hash.
+  std::uint64_t library_value_hash;
 };
 
 // Update only on purpose (a generator was added or changed), with the values
-// printed by `differential --impl reference --tier <name>`.
+// printed by `differential --impl reference --tier <name>` and
+// `differential --impl library --integer-stage --tier <name>`.
 inline constexpr Tier TIERS[] = {
-    {"quick", 10000, 0x661235cb969d53b0, 0x0144b4b46660d9f0},
-    {"deep", 200000, 0x6810df0844e524d8, 0x7dcfb7679d71ad7c},
+    {"quick", 10000, 0xc6eb1bed637b6295, 0x994e864faaace7f0, 0xdb3723f41c66fff2},
+    {"deep", 200000, 0x134b449e4a58d2bc, 0x9cc0da23412f4d94, 0x0ab869c130ea03ac},
 };
 
 inline const Tier* find_tier(const char* name) {

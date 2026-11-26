@@ -165,6 +165,14 @@ void print_sweep(const Implementation& library, const std::vector<Case>& cases) 
 int main(int argc, char** argv) {
   initialize_implementations();
   const Implementation& library = *find_implementation("library");
+  // The library without its exact integer stage: the floating-point stages
+  // alone, whose failure modes outside the domain the "beyond" checks record.
+  // The integer stage is exact wherever it accepts a call, in or out of the
+  // domain, so the shipped library fails on fewer of those inputs (it is
+  // required never to fail on more); it still fails on the others, because
+  // the first filter runs before the integer stage and inputs too wide for
+  // the integer stage fall through.
+  const Implementation& floating_point_only = *find_implementation("library_expansion_only");
   const std::vector<Case> cases = collect_cases();
 
   if (argc == 2 && std::strcmp(argv[1], "--sweep") == 0) {
@@ -195,19 +203,27 @@ int main(int argc, char** argv) {
     // then NaN or an infinity; every result that is still finite has the
     // exact sign.
     for (int t : {limits.max_exponent + 2, limits.max_exponent + 20, 1000}) {
-      const Outcome o = run_upper(library, cases, pred, t);
-      report(pred, "largest exponent (beyond)", t, o);
+      const Outcome o = run_upper(floating_point_only, cases, pred, t);
+      report(pred, "largest exponent (beyond), no integer stage", t, o);
       CHECK(o.not_finite > 0);
       CHECK(o.wrong_sign == 0);
+      const Outcome shipped = run_upper(library, cases, pred, t);
+      report(pred, "largest exponent (beyond)", t, shipped);
+      CHECK(shipped.not_finite <= o.not_finite);
+      CHECK(shipped.wrong_sign == 0);
     }
 
     // Beyond the lower limit a roundoff term underflows. The result is finite
     // and its sign is wrong for some inputs: nothing signals the failure.
     for (int t : {limits.low_exponent - 2, limits.low_exponent - 20, -1000}) {
-      const Outcome o = run_lower(library, cases, pred, t);
-      report(pred, "lowest set bit (beyond)", t, o);
+      const Outcome o = run_lower(floating_point_only, cases, pred, t);
+      report(pred, "lowest set bit (beyond), no integer stage", t, o);
       CHECK(o.wrong_sign > 0);
       CHECK(o.not_finite == 0);
+      const Outcome shipped = run_lower(library, cases, pred, t);
+      report(pred, "lowest set bit (beyond)", t, shipped);
+      CHECK(shipped.wrong_sign <= o.wrong_sign);
+      CHECK(shipped.not_finite == 0);
     }
 
     // Non-finite input: a NaN coordinate gives NaN; an infinite coordinate

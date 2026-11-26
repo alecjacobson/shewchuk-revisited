@@ -29,6 +29,16 @@
 //   * orient2dadapt(), orient3dadapt() and incircleadapt() are never inlined
 //     into the predicates that call them (SHEWCHUK_NOINLINE, see its comment).
 //
+// One thing is new and not from 1996: the exact integer stage
+// (integer_stage.h). For orient3d, incircle and insphere it is tried when the
+// first filter (stage A) cannot certify the sign, before the adaptive stages
+// B, C and D (the *_after_filter() functions); for orient2d, whose stages B
+// and C are cheaper than it, it is tried before stage D (in
+// orient2dadapt()). It returns only a sign, so a call it decides
+// returns -1.0, 0.0 or +1.0. Compiled with
+// SHEWCHUK_PREDICATES_NO_INTEGER_STAGE (test only) the stage is left out and
+// every returned value is the 1996 code's, bit for bit.
+//
 // EXACTNESS DEPENDS ON HOW THIS FILE IS COMPILED. The algorithms need every
 // operation to be one correctly rounded IEEE 754 binary64 operation, exactly
 // as written: no fused multiply-add, no reassociation, no extended precision.
@@ -56,6 +66,7 @@
 #include <cmath>
 
 #include "constants.h"
+#include "integer_stage.h"
 
 #ifdef SHEWCHUK_PREDICATES_TEST_HOOKS
 // Test-only build: different symbol names, stage recording, exported
@@ -424,6 +435,28 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_C);
     return det;
   }
+
+  // Not from 1996: the exact integer stage (integer_stage.h), tried before
+  // stage D. For orient2d it is here and not directly behind stage A as for
+  // the other predicates: stages B and C of orient2d cost less than the
+  // integer stage, stage D costs more. If it declines (coordinates too wide
+  // for its tiers, or not finite), stage D runs as in 1996.
+  //
+  // The stage gets a copy of the coordinates, not pa, pb and pc: if those
+  // pointers were passed on, the compiler could no longer hand the six
+  // coordinates to this function in registers, and stages B and C would wait
+  // for them to be loaded again (measured: 4 cycles per call on mixed
+  // workloads).
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+  {
+    const double a[2] = {pa[0], pa[1]}, b[2] = {pb[0], pb[1]}, c2[2] = {pc[0], pc[1]};
+    const int sign = shewchuk::detail::integer_stage::orient2d(a, b, c2);
+    if (sign != shewchuk::detail::integer_stage::refused) {
+      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+      return sign;
+    }
+  }
+#endif
 
   Two_Product(acxtail, bcy, s1, s0);
   Two_Product(acytail, bcx, t1, t0);
@@ -900,6 +933,24 @@ SHEWCHUK_NOINLINE double orient3dadapt(const double *pa, const double *pb, const
   return finnow[finlength - 1];
 }
 
+// What runs when stage A cannot certify the sign: the exact integer stage
+// (integer_stage.h), and behind it (coordinates too wide for its tiers, or
+// not finite) the adaptive stages of 1996, unchanged. Out of line, so that
+// stage A stays a small leaf function.
+SHEWCHUK_NOINLINE
+double orient3d_after_filter(const double *pa, const double *pb, const double *pc,
+                             const double *pd, double permanent)
+{
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+  const int sign = shewchuk::detail::integer_stage::orient3d(pa, pb, pc, pd);
+  if (sign != shewchuk::detail::integer_stage::refused) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+    return sign;
+  }
+#endif
+  return orient3dadapt(pa, pb, pc, pd, permanent);
+}
+
 }  // namespace
 
 /* predicates.c lines 2291-2334: orient3d() */
@@ -943,7 +994,7 @@ double shewchuk_orient3d(const double *pa, const double *pb, const double *pc,
     return det;
   }
 
-  return orient3dadapt(pa, pb, pc, pd, permanent);
+  return orient3d_after_filter(pa, pb, pc, pd, permanent);
 }
 
 namespace {
@@ -1529,6 +1580,24 @@ SHEWCHUK_NOINLINE double incircleadapt(const double *pa, const double *pb, const
   return finnow[finlength - 1];
 }
 
+// What runs when stage A cannot certify the sign: the exact integer stage
+// (integer_stage.h), and behind it (coordinates too wide for its tiers, or
+// not finite) the adaptive stages of 1996, unchanged. Out of line, so that
+// stage A stays a small leaf function.
+SHEWCHUK_NOINLINE
+double incircle_after_filter(const double *pa, const double *pb, const double *pc,
+                             const double *pd, double permanent)
+{
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+  const int sign = shewchuk::detail::integer_stage::incircle(pa, pb, pc, pd);
+  if (sign != shewchuk::detail::integer_stage::refused) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+    return sign;
+  }
+#endif
+  return incircleadapt(pa, pb, pc, pd, permanent);
+}
+
 }  // namespace
 
 /* predicates.c lines 3225-3269: incircle() */
@@ -1573,7 +1642,7 @@ double shewchuk_incircle(const double *pa, const double *pb, const double *pc,
     return det;
   }
 
-  return incircleadapt(pa, pb, pc, pd, permanent);
+  return incircle_after_filter(pa, pb, pc, pd, permanent);
 }
 
 namespace {
@@ -2056,6 +2125,23 @@ double insphereadapt(const double *pa, const double *pb, const double *pc,
   return insphereexact(pa, pb, pc, pd, pe);
 }
 
+// What runs when stage A cannot certify the sign: the exact integer stage
+// (integer_stage.h), and behind it (coordinates too wide for its tiers, or
+// not finite) the adaptive stages of 1996, unchanged. Not marked
+// SHEWCHUK_NOINLINE, for the reason insphereadapt() is not (see there).
+double insphere_after_filter(const double *pa, const double *pb, const double *pc,
+                             const double *pd, const double *pe, double permanent)
+{
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+  const int sign = shewchuk::detail::integer_stage::insphere(pa, pb, pc, pd, pe);
+  if (sign != shewchuk::detail::integer_stage::refused) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_I);
+    return sign;
+  }
+#endif
+  return insphereadapt(pa, pb, pc, pd, pe, permanent);
+}
+
 }  // namespace
 
 /* predicates.c lines 4157-4262: insphere() */
@@ -2160,7 +2246,7 @@ double shewchuk_insphere(const double *pa, const double *pb, const double *pc,
     return det;
   }
 
-  return insphereadapt(pa, pb, pc, pd, pe, permanent);
+  return insphere_after_filter(pa, pb, pc, pd, pe, permanent);
 }
 
 #ifdef SHEWCHUK_PREDICATES_TEST_HOOKS

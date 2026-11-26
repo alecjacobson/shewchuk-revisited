@@ -51,12 +51,33 @@ target_compile_definitions(shewchuk_predicates_hooked PRIVATE SHEWCHUK_PREDICATE
 target_include_directories(shewchuk_predicates_hooked PUBLIC "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(shewchuk_predicates_hooked PRIVATE shewchuk_strict_fp shewchuk_sanitize)
 
+# --- Further test-only builds of the library under other symbol names
+# The same source and flags as the shipped library plus the given compile
+# definitions; the four predicates are exported as <prefix>orient2d etc.
+function(shewchuk_add_library_variant target prefix)
+  add_library(${target} STATIC "${PROJECT_SOURCE_DIR}/src/predicates.cpp")
+  target_compile_definitions(${target} PRIVATE ${ARGN}
+    shewchuk_orient2d=${prefix}orient2d shewchuk_orient3d=${prefix}orient3d
+    shewchuk_incircle=${prefix}incircle shewchuk_insphere=${prefix}insphere)
+  target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/include")
+  target_link_libraries(${target} PRIVATE shewchuk_strict_fp shewchuk_sanitize)
+endfunction()
+# Without the exact integer stage: must return the 1996 values bit for bit.
+shewchuk_add_library_variant(shewchuk_predicates_expansion_only shewchuk_expansion_only_
+  SHEWCHUK_PREDICATES_NO_INTEGER_STAGE)
+# With the integer stage's portable arithmetic (the one compilers without a
+# 128-bit integer and bit-counting builtins get) forced, so that it is tested
+# on every platform.
+shewchuk_add_library_variant(shewchuk_predicates_portable shewchuk_portable_
+  SHEWCHUK_INTEGER_STAGE_PORTABLE)
+
 # --- Support library shared by the test executables
 add_library(shewchuk_test_support STATIC
   generators.cpp implementations.cpp oracle.cpp oracle_gmp.cpp)
 target_include_directories(shewchuk_test_support PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(shewchuk_test_support PUBLIC
   shewchuk_ref shewchuk_ref_staged shewchuk_predicates shewchuk_predicates_hooked
+  shewchuk_predicates_expansion_only shewchuk_predicates_portable
   shewchuk_strict_fp shewchuk_sanitize)
 if(MSVC)
   target_compile_options(shewchuk_test_support PUBLIC /W3)
@@ -126,6 +147,25 @@ foreach(name test_oracle test_oracle_gmp test_stage_coverage differential
     target_link_options(${name} PRIVATE /STACK:8388608)
   endif()
 endforeach()
+
+# The integer stage on its own (src/integer_stage.h is compiled into the test),
+# in each configuration of its limb arithmetic, with and without the run-time
+# verification of the proof's bounds.
+function(shewchuk_add_integer_stage_test target)
+  add_executable(${target} test_integer_stage.cpp)
+  target_link_libraries(${target} PRIVATE shewchuk_test_support)
+  target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/src")
+  target_compile_definitions(${target} PRIVATE SHEWCHUK_INTEGER_STAGE_TEST_HOOKS ${ARGN})
+  if(MSVC)
+    # It also calls the library, whose insphereexact() needs about 180 KB.
+    target_link_options(${target} PRIVATE /STACK:8388608)
+  endif()
+endfunction()
+shewchuk_add_integer_stage_test(test_integer_stage)
+shewchuk_add_integer_stage_test(test_integer_stage_portable SHEWCHUK_INTEGER_STAGE_PORTABLE)
+shewchuk_add_integer_stage_test(test_integer_stage_checked SHEWCHUK_INTEGER_STAGE_CHECKED)
+shewchuk_add_integer_stage_test(test_integer_stage_checked_portable
+  SHEWCHUK_INTEGER_STAGE_CHECKED SHEWCHUK_INTEGER_STAGE_PORTABLE)
 
 find_package(Threads REQUIRED)
 target_link_libraries(test_threads PRIVATE Threads::Threads)
@@ -267,12 +307,35 @@ shewchuk_add_test(library.threads test_threads)
 shewchuk_add_test(library.stages test_stage_coverage quick library)
 shewchuk_add_test(library.orient2d_first_test test_orient2d_first_test)
 shewchuk_add_test(library.input_domain test_input_domain)
-# The library is declared refactor-only: every value must equal the
-# reference's, and the value hash must equal the recorded one.
+# Without its integer stage the library is a refactoring of the 1996 code:
+# every value must equal the reference's, and the value hash must equal the
+# recorded one.
+shewchuk_add_test(differential.library_expansion_only
+  differential --impl library_expansion_only --tier quick --check-golden --require-identical)
+# With it (the shipped library): zero sign mismatches, and every value is the
+# one the integer-stage contract fixes (differential.cpp): the reference's
+# when the first filter or a 1996 stage decides, exactly -1, 0 or +1 when the
+# integer stage does. The hash of those values is recorded too, and the build
+# with the portable multiplication must reproduce it.
 shewchuk_add_test(differential.library
-  differential --impl library --tier quick --check-golden --require-identical)
+  differential --impl library --tier quick --check-golden --integer-stage)
 shewchuk_add_test(differential.library_hooked
-  differential --impl library_hooked --tier quick --check-golden --require-identical)
+  differential --impl library_hooked --tier quick --check-golden --integer-stage)
+shewchuk_add_test(differential.library_portable
+  differential --impl library_portable --tier quick --check-golden --integer-stage)
+
+# The integer stage on its own; see test_integer_stage.cpp.
+shewchuk_add_test(integer_stage.unit test_integer_stage quick)
+shewchuk_add_test(integer_stage.portable test_integer_stage_portable quick)
+shewchuk_add_test(integer_stage.checked test_integer_stage_checked quick)
+shewchuk_add_test(integer_stage.checked_portable test_integer_stage_checked_portable quick)
+if(Python3_FOUND)
+  # The bit widths of docs/proofs/integer-stage.md, re-derived with exact
+  # integers from the expressions and compared with the header's formulas.
+  shewchuk_add_test(integer_stage.widths
+    "${Python3_EXECUTABLE}" "${PROJECT_SOURCE_DIR}/tools/integer_stage_widths.py"
+    "${PROJECT_SOURCE_DIR}/src/integer_stage.h")
+endif()
 
 # The caller's flags and link-time optimization do not reach the library's
 # arithmetic; and the test notices when they do.
@@ -336,8 +399,16 @@ if(SHEWCHUK_DEEP_TESTS)
   shewchuk_add_test(deep.library.stages test_stage_coverage deep library)
   shewchuk_add_test(deep.library.expansions test_expansions 60000)
   shewchuk_add_test(deep.differential.library
-    differential --impl library --tier deep --check-golden --require-identical)
+    differential --impl library --tier deep --check-golden --integer-stage)
+  shewchuk_add_test(deep.differential.library_expansion_only
+    differential --impl library_expansion_only --tier deep --check-golden --require-identical)
+  shewchuk_add_test(deep.differential.library_portable
+    differential --impl library_portable --tier deep --check-golden --integer-stage)
+  shewchuk_add_test(deep.integer_stage.checked test_integer_stage_checked deep)
+  shewchuk_add_test(deep.integer_stage.checked_portable test_integer_stage_checked_portable deep)
   set_tests_properties(deep.library.stages deep.library.expansions deep.differential.library
+    deep.differential.library_expansion_only deep.differential.library_portable
+    deep.integer_stage.checked deep.integer_stage.checked_portable
     PROPERTIES TIMEOUT 3600 LABELS deep)
   shewchuk_add_test(deep.stages.coverage test_stage_coverage deep)
   shewchuk_add_test(deep.differential.reference
