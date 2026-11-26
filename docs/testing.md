@@ -20,7 +20,7 @@ Options:
 
 | CMake option | Effect |
 |---|---|
-| `-DSHEWCHUK_DEEP_TESTS=ON` | also registers the deep tier (`deep.*` tests, 20x the cases, about a minute) |
+| `-DSHEWCHUK_DEEP_TESTS=ON` | also registers the deep tier (`deep.*` tests, up to 20x the cases, a few minutes) |
 | `-DSHEWCHUK_REQUIRE_GMP=ON` | configuration fails if GMP is missing, instead of skipping the GMP cross-check |
 | `-DSHEWCHUK_BUILD_COMPARATORS=ON` | downloads and builds third-party exact predicates and registers the `comparator.*` tests ([comparators.md](comparators.md)) |
 | `-DSHEWCHUK_SANITIZE=address,undefined` | builds the library and the tests (not the pristine reference) with these sanitizers; `thread` for ThreadSanitizer |
@@ -47,15 +47,15 @@ Tests of the library (`src/predicates.cpp`):
 
 | Test | What it proves |
 |---|---|
-| `differential.library_expansion_only` | the library built without its integer stage is a refactoring of the 1996 code: zero sign mismatches, every value equals the reference's bit for bit, the value hash equals the recorded reference hash |
+| `differential.library_expansion_only` | the library built without its integer stage and its input-domain guard is a refactoring of the 1996 code: zero sign mismatches, every value equals the reference's bit for bit, the value hash equals the recorded reference hash |
 | `differential.library` | the shipped library: zero sign mismatches against the oracle, and every value is the one the integer-stage contract fixes (below); the value hash equals the recorded library hash |
 | `differential.library_hooked` | the same for the library's test-only build |
 | `differential.library_portable` | the same, with the same hash, for the library built with the integer stage's portable 64x64->128 multiplication (the one compilers without a 128-bit integer use) |
-| `library.stages` | every stage of the library decides enough cases: at least 2% for the stages before the integer stage and for the integer stage, at least 0.5% (and 200 cases) for the stages behind it, which only inputs too wide for the integer stage reach. Every single case is decided by the stage it must be decided in: the reference's stage, or the integer stage if the reference's stage comes after it and the case's width is at most 189. For orient2d the library has one first test where the reference has two (A0 and A); a call that test decides is counted as A0 if its two products have opposite signs or one is zero, the class the reference decides in A0, and as A otherwise |
+| `library.stages` | every stage of the library decides enough cases: at least 2% for the stages before the integer stage and for the integer stage, at least 0.5% (and 200 cases) for the stages behind it, which only inputs too wide for the integer stage reach. Every single case is decided by the stage it must be decided in: the reference's stage, or the integer stage if the reference's stage comes after it and the case's width is at most 189. For orient2d the library has one first test where the reference has two (A0 and A); a call that test decides is counted as A0 if its two products have opposite signs or one is zero, the class the reference decides in A0, and as A otherwise. **The input-domain guard is never in the way of the corpus**, which is inside the range of the 1996 paper: every case the reference decides in its first test is decided by the library's first test with its guard holding (exceptions, with the reference's value: `orient2d` with two zero products, which leaves by a branch of its own, and `insphere` with every coordinate below 2^-120, whose first filter is confirmed by the domain check; the latter must stay below 0.1% of the cases), every case is inside the floating-point domain, and the wide tier decides none |
 | `integer_stage.unit`, `.portable`, `.checked`, `.checked_portable` | the integer stage on its own (`tests/test_integer_stage.cpp`), in four builds: default and portable limb arithmetic, each with and without run-time verification of the proof's bounds. See below |
 | `integer_stage.widths` | the bit widths of `docs/proofs/integer-stage.md`, re-derived with exact integers by `tools/integer_stage_widths.py`, agree with the formulas in `src/integer_stage.h` and fit the limbs of every tier |
-| `library.orient2d_first_test` | the library's merged first test of orient2d returns the reference's value, in the reference's stage, on 234256 combinations of special products the corpus does not contain: zeros of both signs, equal and opposite products, subnormal, huge, overflowed to infinity |
-| `library.input_domain` | on a slice of the corpus rescaled by powers of two: exact at the edge of the supported domain (coordinate exponents in [-142, 201]) and up to the observed per-predicate limits; one step beyond them, overflow gives NaN or an infinity and never a finite wrong sign, underflow gives silently wrong signs; a NaN coordinate gives NaN and an infinite one never a finite value. The part beyond the domain records current behaviour, it is not a contract (docs/exactness.md, "Input domain") |
+| `library.orient2d_first_test` | the library's first test of orient2d on 331776 combinations of special products the corpus does not contain (zeros of both signs, equal and opposite products, subnormal, huge, overflowed to infinity): the exact sign on every one; inside the window of the test's guard, and for two zero products, the reference's value in the reference's stage; outside the window the first test decides nothing by itself. The 1996 code is wrong on thousands of these |
+| `library.input_domain` | **the exact sign for every finite input.** See below |
 | `library.expansions` | `fast_expansion_sum_zeroelim`, `scale_expansion_zeroelim` and `estimate` return the same components as the reference's routines on random and adversarial expansions, up to the largest lengths any predicate uses |
 | `library.constants` | the compile-time constants equal the globals `exactinit()` computes, their formulas and their documented bit patterns |
 | `library.api`, `library.api_c` | the public headers from C++ and C, including the opt-in 1996 names |
@@ -77,6 +77,58 @@ found):
 | `comparator.geometric_predicates` | GeometricPredicates is recorded as returning wrong signs (its `orient3d`). The test prints them by kind and by generator family and fails if there are none any more, or if there is one on uniform random input, where a wrong sign would mean a wrong wrapper |
 
 A skipped test is reported as skipped, never as passed.
+
+## The whole finite range
+
+`test_input_domain` compares the library's sign with the oracle's on inputs
+from everywhere outside the range of the 1996 paper, in six families:
+
+| family | inputs |
+|---|---|
+| upper sweep | a slice of the corpus (25 cases per generator, every stage) rescaled by a power of two so that its largest coordinate has binary exponent T, for every T from 201 to 1023 |
+| lower sweep | the same with the lowest set bit of any coordinate at 2^T, for every T from -150 to -1074; and every case of the slice at the four exponents just inside the lower edge of the floating-point domain |
+| axes | `orient2d`, `orient3d`: each axis rescaled by its own power of two (the sign is unchanged), so that products underflow next to products that do not and next to factors that amplify them |
+| spikes | small integers times powers of two from a list of exponents around the thresholds where products of 2 to 5 coordinates overflow or underflow, zeros of both signs: exact cancellation everywhere |
+| subnormal | every coordinate a subnormal number or zero |
+| full range | every coordinate with its own exponent from the whole format, repeated coordinates |
+
+plus the insphere call for which the 1996 code was reported to return the
+opposite nonzero sign. In the quick tier one case of the slice in 48 is used
+per exponent (rotating); `deep.library.input_domain` uses six times as many
+and larger random families.
+
+What it requires:
+
+- **the library**: zero wrong signs and zero non-finite results;
+- **negative control**: the pristine 1996 code and the library without guard
+  and integer stage, on the same inputs, are wrong (wrong sign, NaN or
+  infinity) more than 20 times in every family and for every predicate; in
+  the lower sweep with finite wrong signs, in the upper sweep with NaN or
+  infinity; and they are exact as long as the slice stays within the limits
+  recorded in docs/exactness.md;
+- **routes**: the test-only build reports the stage and the path of every
+  call (`shewchuk_hooked_last_stage`, `shewchuk_hooked_last_path`,
+  `shewchuk_hooked_last_integer_tier`). On every case the route must be one
+  the proof allows: a floating-point stage behind the first filter only
+  inside the floating-point domain (`orient2d`: stage D; its stages B and C
+  also under the window), the integer tier that the width and the domain
+  select (computed independently in `tests/width.h`), a recheck only inside
+  the domain. Over the run every route must be taken at least 100 times per
+  predicate: the first test with its guard holding, the recheck, the adaptive
+  stages, a fast integer tier inside and outside the domain, the wide tier;
+  and the guard must have stopped the first test at least 300 times where
+  the 1996 code returned from its own;
+- **the test-only build** returns the shipped library's value on every case;
+- **no exception flags**: at the corners of the floating-point domain, a call
+  that a floating-point stage decides does not raise the underflow or the
+  overflow flag; far outside, the unguarded stages do (so the check can
+  fail);
+- **non-finite input**: NaN for a NaN or an infinity at every coordinate
+  position, alone and in combinations, at the case's own scale and at both
+  ends of the format.
+
+What these tests cannot do is validate the guard's thresholds; see the
+mutation table in [proofs/input-domain.md](proofs/input-domain.md).
 
 ## The integer stage and the value contract
 
@@ -106,20 +158,26 @@ the test):
   from the whole format, infinities and NaNs;
 - force-stage: on every corpus case the stage, as the sole decider, returns
   the oracle's sign or declines; it declines exactly the cases wider than
-  189, uses the tier the width selects, and every tier and the refusal see
-  at least 2% of each predicate's cases;
+  189 (the corpus is inside the floating-point domain), uses the tier the
+  width selects, and every fast tier and the refusal see at least 2% of each
+  predicate's cases. Under the request `always_exact` it decides every case
+  (the declined ones in the wide tier; one in 16 of them is run), and under
+  `prefer_floating_point` it declines exactly the cases inside the
+  floating-point domain;
 - worst-case magnitudes: every coordinate at the largest value of the width,
-  with every sign pattern, at widths exactly at each tier's limit and one
-  past it (and around the limb boundaries), anywhere in the exponent range of
-  a double;
+  with every sign pattern, at widths exactly at each fast tier's limit and
+  one past it (and around the limb boundaries), anywhere in the exponent
+  range of a double; and for the wide tier at widths from 190 to 2098, the
+  largest a finite input can have;
 - a negative control: a tier forced onto inputs 5 bits too wide returns wrong
   signs;
-- non-finite coordinates are declined and the library returns what it
-  returns without the stage;
+- non-finite coordinates are reported as such under every request, and the
+  library returns NaN;
 - in the checked builds (`SHEWCHUK_INTEGER_STAGE_CHECKED`): no addition or
   subtraction overflowed, every intermediate stayed within the bit width the
   proof states for it, the worst-case inputs came within 5 bits of every
-  bound, and the negative control tripped the checks.
+  bound (for the wide tier: of the bound at the largest width there is), and
+  the negative control tripped the checks.
 
 The `wide_span` generator families exist for the fall-through path: their
 coordinates come from two exponent bands 140 binades apart, so the integer
@@ -144,14 +202,16 @@ stage declines them and stages B, Bx, C and D of the library stay covered.
 - `src/test_hooks.h`: the library's test-only build. The same source and
   flags as the shipped library, compiled a second time with
   `SHEWCHUK_PREDICATES_TEST_HOOKS`: different symbol names, a record of the
-  stage that decided each call, and exported expansion routines. None of it
-  exists in the shipped library.
+  stage that decided each call, of the path the call took past the
+  input-domain guard and of the integer tier, and exported expansion
+  routines. None of it exists in the shipped library.
 - Two more test-only builds of the same source under other symbol names
   (`tests/CMakeLists.txt`): `library_expansion_only`
   (`SHEWCHUK_PREDICATES_NO_INTEGER_STAGE`) and `library_portable`
   (`SHEWCHUK_INTEGER_STAGE_PORTABLE`).
-- `tests/width.h`: the width of a case and the position of the integer stage,
-  independent of the library.
+- `tests/width.h`: the width of a case, the position of the integer stage,
+  the floating-point domain and the integer tier a case must be decided in,
+  all independent of the library.
 
 ## Sanitizers
 

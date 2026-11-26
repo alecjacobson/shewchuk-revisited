@@ -67,10 +67,16 @@ def main():
     source = open(arguments[0]).read()
     magnitude_bits = parse_switch(source, "magnitude_bits")
     limbs_of = parse_switch(source, "limbs_of")
-    tiers = int(re.search(r"constexpr int num_tiers = (\d+);", source).group(1))
+    fast_tiers = int(re.search(r"constexpr int num_tiers = (\d+);", source).group(1))
+    wide_tier = int(re.search(r"constexpr int wide_tier = (\d+);", source).group(1))
+    # The fast tiers 1 ... num_tiers, and the wide tier.
+    tiers = list(range(1, fast_tiers + 1)) + [wide_tier]
     max_width_expression = re.search(
         r"constexpr int max_width\(int tier\)(?: noexcept)? \{ return ([^;]+); \}", source).group(1)
-    max_width = {D: eval(max_width_expression, {"tier": D}) for D in range(1, tiers + 1)}
+    max_width = {D: eval(max_width_expression, {"tier": D}) for D in tiers}
+    # The largest width of a finite input: the wide tier must hold it.
+    max_finite_width = eval(re.search(
+        r"constexpr int max_finite_width = ([^;]+);", source).group(1))
 
     kinds = list(largest_magnitudes(1))
     if set(kinds) != set(magnitude_bits) or set(kinds) != set(limbs_of):
@@ -79,7 +85,7 @@ def main():
     failures = 0
     # 1. The stated power-of-two bounds hold at every width (far beyond the
     # widest tier: the formulas are claimed for all W).
-    for W in range(0, 2 * max_width[tiers] + 1):
+    for W in range(0, 2 * max_width[fast_tiers] + 1):
         derived = largest_magnitudes(W)
         for kind in kinds:
             k = eval(magnitude_bits[kind], {"W": W})
@@ -88,8 +94,15 @@ def main():
                       f"{derived[kind].bit_length()} bits, the header says {k}")
                 failures += 1
     # 2. Every tier holds every intermediate, sign bit included, up to its limit.
-    for D in range(1, tiers + 1):
-        for W in range(0, max_width[D] + 1):
+    for D in tiers:
+        # (The bounds grow with W, so for the wide tier the widths near its
+        # limit, the largest finite width and a sample of the others are
+        # enough; the fast tiers are checked at every width.)
+        widths = range(0, max_width[D] + 1)
+        if D == wide_tier:
+            widths = sorted(set(range(0, max_width[D] + 1, 37)) |
+                            set(range(max_width[D] - 70, max_width[D] + 1)) | {max_finite_width})
+        for W in widths:
             derived = largest_magnitudes(W)
             for kind in kinds:
                 bits = 64 * eval(limbs_of[kind], {"D": D})
@@ -105,19 +118,31 @@ def main():
                   if derived[kind].bit_length() + 1 > 64 * eval(limbs_of[kind], {"D": D})]
         print(f"tier {D}: every intermediate fits for W <= {max_width[D]}; at W = {W} the bound of "
               f"{', '.join(beyond) if beyond else 'nothing'} no longer fits")
+    if max_width[wide_tier] < max_finite_width:
+        print(f"FAIL: the wide tier holds widths up to {max_width[wide_tier]}, but a finite input "
+              f"can have width {max_finite_width}")
+        failures += 1
+    else:
+        narrower = eval(max_width_expression, {"tier": wide_tier - 1})
+        print(f"the wide tier ({wide_tier} limbs per difference) holds every finite input "
+              f"(largest width {max_finite_width}); {wide_tier - 1} limbs would hold widths up to "
+              f"{narrower}")
+        if narrower >= max_finite_width:
+            print("FAIL: the wide tier is wider than it needs to be")
+            failures += 1
 
     if "--table" in sys.argv:
         print()
         header = "| intermediate | magnitude below 2^k, k = | limbs |"
         rule = "|---|---|---|"
-        for D in range(1, tiers + 1):
+        for D in tiers:
             header += f" tier {D}: bits needed at W = {max_width[D]} / bits available |"
             rule += "--:|"
         print(header)
         print(rule)
         for kind in kinds:
             row = f"| `{kind}` | {magnitude_bits[kind].replace(' * ', '')} | {limbs_of[kind].replace(' * ', '')} |"
-            for D in range(1, tiers + 1):
+            for D in tiers:
                 k = eval(magnitude_bits[kind], {"W": max_width[D]})
                 row += f" {k + 1} / {64 * eval(limbs_of[kind], {'D': D})} |"
             print(row)

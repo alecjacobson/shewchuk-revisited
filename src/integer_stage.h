@@ -19,9 +19,14 @@
 // (SHEWCHUK_INTEGER_STAGE_CHECKED, test only) verifies every bound of the
 // proof at run time on every operation.
 //
-// The stage REFUSES (returns `refused`) instead of answering when a
-// coordinate is not finite or W exceeds the widest tier. The caller then runs
-// the floating-point expansion stages, exactly as before this stage existed.
+// The stage answers for EVERY finite input for which the caller may not rely
+// on floating-point arithmetic. Widths up to 189 go to one of three fast
+// tiers. A wider input is either inside the domain in which the
+// floating-point expansion stages of 1996 are valid
+// (in_floating_point_domain() below, docs/proofs/input-domain.md): then the
+// stage returns `refused` and the caller runs those stages, as before this
+// stage existed; or it is not, and the wide tier, whose limbs hold any finite
+// double, decides it. A coordinate that is not finite gives `not_finite`.
 //
 // All limb arithmetic is unsigned (no signed overflow is possible), and the
 // only floating-point operation in this file is copying the bits of a double.
@@ -80,12 +85,60 @@ using limb = std::uint64_t;
 
 // What a predicate of this stage returns when it does not decide; otherwise
 // it returns the sign, -1, 0 or +1.
+//   refused     the coordinates are finite and inside the domain of the
+//               floating-point stages: the caller runs those
+//   not_finite  a coordinate is an infinity or a NaN
 inline constexpr int refused = 2;
+inline constexpr int not_finite = 3;
 
-// The tiers. Tier D (D = 1, 2, 3) stores a coordinate difference in D limbs
-// and accepts widths up to max_width(D) = 64 D - 3.
+// What the caller asks for (see SHEWCHUK_INTEGER_STAGE_DECIDE).
+enum class Request {
+  // Decide every input the fast tiers hold. Refuse a wider one if it is in
+  // the floating-point domain; decide it in the wide tier if it is not.
+  exact_or_floating_point,
+  // Refuse every input in the floating-point domain, whatever its width;
+  // decide every other one.
+  prefer_floating_point,
+  // Never refuse a finite input.
+  always_exact,
+};
+
+// The tiers. Tier D stores a coordinate difference in D limbs and accepts
+// widths up to max_width(D) = 64 D - 3. The fast tiers are D = 1, 2, 3; the
+// wide tier is D = wide_tier and holds every finite input.
 inline constexpr int num_tiers = 3;
 constexpr int max_width(int tier) noexcept { return 64 * tier - 3; }
+inline constexpr int wide_tier = 33;
+// The largest width there is: the highest set bit of a finite double has
+// exponent at most 1023 and the lowest at least -1074 (see scale()).
+inline constexpr int max_finite_width = 1023 + 1074 + 1;
+static_assert(max_width(wide_tier) >= max_finite_width,
+              "the wide tier must hold every finite input");
+static_assert(max_width(wide_tier - 1) < max_finite_width,
+              "the wide tier is the narrowest tier that holds every finite input");
+
+// ---------------------------------------------------------------------------
+// The domain of the floating-point stages (docs/proofs/input-domain.md).
+// With L the binary exponent of the lowest set bit of any coordinate and H
+// the binary exponent of the largest magnitude, no operation of the stages A
+// to D of a predicate of degree d overflows or underflows if
+//   H <= floating_point_max_exponent   and   d * L >= floating_point_min_grid.
+// The floating-point stages B, C and D are used only on such inputs (for
+// orient2d: stage D; its stages B and C have their own guard). Every other
+// input is decided by the integer stage.
+// ---------------------------------------------------------------------------
+inline constexpr int floating_point_max_exponent = 201;
+// -1074 is the exponent of the smallest subnormal number; 160 covers the
+// lowest set bit of every error-bound constant (checked in predicates.cpp).
+inline constexpr int error_constant_grid = 160;
+inline constexpr int floating_point_min_grid = -1074 + error_constant_grid;
+// `low` and `high` as scale() computes them, biased by 1075: the lowest set
+// bit of any coordinate is 2^(low - 1075), every magnitude is below
+// 2^(high - 1075). Not meaningful if all coordinates are zero.
+constexpr bool in_floating_point_domain(int degree, int low, int high) noexcept {
+  return high - 1076 <= floating_point_max_exponent &&
+         degree * (low - 1075) >= floating_point_min_grid;
+}
 
 // ---------------------------------------------------------------------------
 // The derivation, as code (docs/proofs/integer-stage.md, section 3).
@@ -168,13 +221,18 @@ static_assert(!tier_holds_every_intermediate(1, max_width(1) + 1));
 static_assert(!tier_holds_every_intermediate(2, max_width(2) + 1));
 static_assert(!tier_holds_every_intermediate(3, max_width(3) + 1));
 static_assert(max_width(1) == 61 && max_width(2) == 125 && max_width(3) == 189);
+// The derivation is the same for every D (docs/proofs/integer-stage.md,
+// section 3); the wide tier is one more instance of it.
+static_assert(tier_holds_every_intermediate(wide_tier, max_width(wide_tier)));
+static_assert(!tier_holds_every_intermediate(wide_tier, max_width(wide_tier) + 1));
 
 // ---------------------------------------------------------------------------
 // Test-only instrumentation
 // ---------------------------------------------------------------------------
 #ifdef SHEWCHUK_INTEGER_STAGE_TEST_HOOKS
 // Width of the most recent call (-1 if a coordinate was not finite) and the
-// tier that decided it (0 if the stage refused). Not thread-safe.
+// tier that decided it (0 if the stage did not decide, wide_tier for the wide
+// tier). Not thread-safe.
 inline int last_width = -1;
 inline int last_tier = 0;
 #define SHEWCHUK_INTEGER_STAGE_RECORD(width, tier) (last_width = (width), last_tier = (tier))
@@ -185,8 +243,10 @@ inline int last_tier = 0;
 #ifdef SHEWCHUK_INTEGER_STAGE_CHECKED
 // Number of violated checks since the start of the process. Not thread-safe.
 inline long check_violations = 0;
-// Largest bit length of |value| seen so far, per kind and tier.
-inline int observed_bits[NUM_KINDS][num_tiers + 1] = {};
+// Largest bit length of |value| seen so far, per kind and tier; the wide tier
+// is recorded at index num_tiers + 1.
+inline int observed_bits[NUM_KINDS][num_tiers + 2] = {};
+constexpr int tier_index(int D) noexcept { return D <= num_tiers ? D : num_tiers + 1; }
 #define SHEWCHUK_INTEGER_STAGE_CHECK(condition) ((condition) ? (void)0 : (void)++check_violations)
 #else
 #define SHEWCHUK_INTEGER_STAGE_CHECK(condition) ((void)0)
@@ -429,7 +489,7 @@ SHEWCHUK_INTEGER_STAGE_INLINE Int<N> bounded([[maybe_unused]] Kind kind, [[maybe
   SHEWCHUK_INTEGER_STAGE_CHECK(N == limbs_of(kind, D));
   SHEWCHUK_INTEGER_STAGE_CHECK(bits <= magnitude_bits(kind, W));
   SHEWCHUK_INTEGER_STAGE_CHECK(bits <= 64 * N - 1);
-  if (bits > observed_bits[kind][D]) observed_bits[kind][D] = bits;
+  if (bits > observed_bits[kind][tier_index(D)]) observed_bits[kind][tier_index(D)] = bits;
 #endif
   return value;
 }
@@ -457,6 +517,15 @@ struct Scaled {
   int width;
 };
 
+// Where the set bits of the coordinates of one call are. Biased by 1075: the
+// lowest set bit of any coordinate is 2^(low - 1075) and every magnitude is
+// below 2^(high - 1075). If all coordinates are zero, low is beyond 2^20 and
+// high is 1. (Not a part of Scaled: the tiers do not need it, and Scaled
+// keeps the layout the tiers were measured with.)
+struct Extent {
+  int low, high;
+};
+
 // Decomposes the K doubles whose bit patterns are in `bits`. Returns false,
 // leaving `out` unspecified, if one of them is an infinity or a NaN.
 //
@@ -477,7 +546,8 @@ struct Scaled {
 // when a nonzero coordinate exists, and a non-finite coordinate is the
 // maximum of `highest`: no per-coordinate test is needed for either.
 template <int K>
-SHEWCHUK_INTEGER_STAGE_INLINE bool scale(const limb* bits, Scaled<K>& out) noexcept {
+SHEWCHUK_INTEGER_STAGE_INLINE bool scale(const limb* bits, Scaled<K>& out,
+                                         Extent& extent) noexcept {
   int lowest[K];
   int low = INT_MAX, high = 0;
   for (int i = 0; i < K; i++) {
@@ -499,8 +569,15 @@ SHEWCHUK_INTEGER_STAGE_INLINE bool scale(const limb* bits, Scaled<K>& out) noexc
   if (high >= 2047 + 53) return false;
   // All coordinates zero: high is 1 and low is beyond 2^20.
   out.width = high > low ? high - low : 0;
+  extent.low = low;
+  extent.high = high;
   for (int i = 0; i < K; i++) out.shift[i] = lowest[i] - low;
   return true;
+}
+template <int K>
+SHEWCHUK_INTEGER_STAGE_INLINE bool scale(const limb* bits, Scaled<K>& out) noexcept {
+  Extent extent;
+  return scale(bits, out, extent);
 }
 
 // The scaled coordinate i as a D-limb integer. Requires out.width <= 64 D - 1
@@ -682,66 +759,210 @@ SHEWCHUK_INTEGER_STAGE_INLINE void load_bits(const double* p, int count, limb* b
   std::memcpy(bits, p, sizeof(double) * static_cast<std::size_t>(count));
 }
 
-// Scales the coordinates and evaluates the determinant in the narrowest tier
-// that holds them; `refused` if there is none.
-#define SHEWCHUK_INTEGER_STAGE_DECIDE(predicate, count)        \
-  Scaled<count> s;                                             \
-  if (!scale(bits, s)) {                                       \
-    SHEWCHUK_INTEGER_STAGE_RECORD(-1, 0);                      \
-    return refused;                                            \
-  }                                                            \
-  if (s.width <= Tier<1>::limit) {                             \
-    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 1);                 \
-    return Tier<1>::predicate(s);                              \
-  }                                                            \
-  if (s.width <= Tier<2>::limit) {                             \
-    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 2);                 \
-    return Tier<2>::predicate(s);                              \
-  }                                                            \
-  if (s.width <= Tier<3>::limit) {                             \
-    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 3);                 \
-    return Tier<3>::predicate(s);                              \
-  }                                                            \
-  SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 0);                   \
-  return refused
-static_assert(num_tiers == 3, "SHEWCHUK_INTEGER_STAGE_DECIDE lists the tiers explicitly");
+// Scales the coordinates and evaluates the determinant in the narrowest fast
+// tier that holds them; coordinates wider than the fast tiers go to
+// wide_or_refused_<predicate>(). All coordinates zero (width 0) is decided by
+// tier 1. This is the code of the request `exact_or_floating_point`, the one
+// the predicates make on the path that matters for speed; up to the last
+// line it is what the stage was before it had a wide tier.
+#define SHEWCHUK_INTEGER_STAGE_DECIDE(predicate, count)                         \
+  Scaled<count> s;                                                              \
+  Extent extent;                                                                \
+  if (!scale(bits, s, extent)) {                                                \
+    SHEWCHUK_INTEGER_STAGE_RECORD(-1, 0);                                       \
+    return not_finite;                                                          \
+  }                                                                             \
+  if (s.width <= Tier<1>::limit) {                                              \
+    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 1);                                  \
+    return Tier<1>::predicate(s);                                               \
+  }                                                                             \
+  if (s.width <= Tier<2>::limit) {                                              \
+    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 2);                                  \
+    return Tier<2>::predicate(s);                                               \
+  }                                                                             \
+  if (s.width <= Tier<3>::limit) {                                              \
+    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 3);                                  \
+    return Tier<3>::predicate(s);                                               \
+  }                                                                             \
+  return wide_or_refused_##predicate(s, extent)
+static_assert(num_tiers == 3, "SHEWCHUK_INTEGER_STAGE_DECIDE lists the fast tiers explicitly");
 
-// The exact sign (-1, 0, +1) of each predicate, with the sign convention of
-// the public functions, or `refused`.
-[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int orient2d(const double* pa, const double* pb,
-                                                              const double* pc) noexcept {
+// The other two requests, in front of the code above: `prefer_floating_point`
+// refuses inside the floating-point domain before any tier is tried, and
+// `always_exact` sends coordinates wider than the fast tiers to the wide tier
+// without asking where they are. Whatever is left is decided by the code
+// above, which then cannot refuse: under `prefer_floating_point` the
+// coordinates are outside the domain (or all zero), under `always_exact`
+// they fit a fast tier. (The coordinates are scaled twice on these paths.
+// They are rare.)
+#define SHEWCHUK_INTEGER_STAGE_OTHER_REQUESTS(predicate, count, degree)        \
+  if (request != Request::exact_or_floating_point) {                            \
+    Scaled<count> s;                                                            \
+    Extent extent;                                                              \
+    if (!scale(bits, s, extent)) {                                              \
+      SHEWCHUK_INTEGER_STAGE_RECORD(-1, 0);                                     \
+      return not_finite;                                                        \
+    }                                                                           \
+    if (request == Request::prefer_floating_point) {                            \
+      if (s.width != 0 && in_floating_point_domain(degree, extent.low, extent.high)) { \
+        SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 0);                              \
+        return refused;                                                         \
+      }                                                                         \
+    } else if (s.width > max_width(num_tiers)) {                                \
+      SHEWCHUK_INTEGER_STAGE_RECORD(s.width, wide_tier);                        \
+      return wide_##predicate(s);                                               \
+    }                                                                           \
+  }
+
+// orient2d: the wide tier's determinant, never inlined: its integers are large
+// (docs/proofs/input-domain.md, section 7), and the stack they need must not
+// become part of the frame of the fast tiers.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_orient2d(const Scaled<6>& s) noexcept {
+  return Tier<wide_tier>::orient2d(s);
+}
+// Coordinates wider than the fast tiers: refused inside the floating-point
+// domain, decided by the wide tier outside.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_or_refused_orient2d(
+    const Scaled<6>& s, const Extent& extent) noexcept {
+  if (in_floating_point_domain(2, extent.low, extent.high)) {
+    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 0);
+    return refused;
+  }
+  SHEWCHUK_INTEGER_STAGE_RECORD(s.width, wide_tier);
+  return wide_orient2d(s);
+}
+// The exact sign (-1, 0, +1), with the sign convention of the public
+// function, or `refused`, or `not_finite`: the request
+// `exact_or_floating_point`.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int orient2d(
+    const double* pa, const double* pb, const double* pc) noexcept {
   limb bits[6];
   load_bits(pa, 2, bits), load_bits(pb, 2, bits + 2), load_bits(pc, 2, bits + 4);
   SHEWCHUK_INTEGER_STAGE_DECIDE(orient2d, 6);
 }
+// The same under any request.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int orient2d(
+    const double* pa, const double* pb, const double* pc, Request request) noexcept {
+  limb bits[6];
+  load_bits(pa, 2, bits), load_bits(pb, 2, bits + 2), load_bits(pc, 2, bits + 4);
+  SHEWCHUK_INTEGER_STAGE_OTHER_REQUESTS(orient2d, 6, 2)
+  return orient2d(pa, pb, pc);
+}
 
-[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int orient3d(const double* pa, const double* pb,
-                                                              const double* pc,
-                                                              const double* pd) noexcept {
+// orient3d: the wide tier's determinant, never inlined: its integers are large
+// (docs/proofs/input-domain.md, section 7), and the stack they need must not
+// become part of the frame of the fast tiers.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_orient3d(const Scaled<12>& s) noexcept {
+  return Tier<wide_tier>::orient3d(s);
+}
+// Coordinates wider than the fast tiers: refused inside the floating-point
+// domain, decided by the wide tier outside.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_or_refused_orient3d(
+    const Scaled<12>& s, const Extent& extent) noexcept {
+  if (in_floating_point_domain(3, extent.low, extent.high)) {
+    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 0);
+    return refused;
+  }
+  SHEWCHUK_INTEGER_STAGE_RECORD(s.width, wide_tier);
+  return wide_orient3d(s);
+}
+// The exact sign (-1, 0, +1), with the sign convention of the public
+// function, or `refused`, or `not_finite`: the request
+// `exact_or_floating_point`.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int orient3d(
+    const double* pa, const double* pb, const double* pc, const double* pd) noexcept {
   limb bits[12];
   load_bits(pa, 3, bits), load_bits(pb, 3, bits + 3), load_bits(pc, 3, bits + 6);
   load_bits(pd, 3, bits + 9);
   SHEWCHUK_INTEGER_STAGE_DECIDE(orient3d, 12);
 }
+// The same under any request.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int orient3d(
+    const double* pa, const double* pb, const double* pc, const double* pd, Request request) noexcept {
+  limb bits[12];
+  load_bits(pa, 3, bits), load_bits(pb, 3, bits + 3), load_bits(pc, 3, bits + 6);
+  load_bits(pd, 3, bits + 9);
+  SHEWCHUK_INTEGER_STAGE_OTHER_REQUESTS(orient3d, 12, 3)
+  return orient3d(pa, pb, pc, pd);
+}
 
-[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int incircle(const double* pa, const double* pb,
-                                                              const double* pc,
-                                                              const double* pd) noexcept {
+// incircle: the wide tier's determinant, never inlined: its integers are large
+// (docs/proofs/input-domain.md, section 7), and the stack they need must not
+// become part of the frame of the fast tiers.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_incircle(const Scaled<8>& s) noexcept {
+  return Tier<wide_tier>::incircle(s);
+}
+// Coordinates wider than the fast tiers: refused inside the floating-point
+// domain, decided by the wide tier outside.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_or_refused_incircle(
+    const Scaled<8>& s, const Extent& extent) noexcept {
+  if (in_floating_point_domain(4, extent.low, extent.high)) {
+    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 0);
+    return refused;
+  }
+  SHEWCHUK_INTEGER_STAGE_RECORD(s.width, wide_tier);
+  return wide_incircle(s);
+}
+// The exact sign (-1, 0, +1), with the sign convention of the public
+// function, or `refused`, or `not_finite`: the request
+// `exact_or_floating_point`.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int incircle(
+    const double* pa, const double* pb, const double* pc, const double* pd) noexcept {
   limb bits[8];
   load_bits(pa, 2, bits), load_bits(pb, 2, bits + 2), load_bits(pc, 2, bits + 4);
   load_bits(pd, 2, bits + 6);
   SHEWCHUK_INTEGER_STAGE_DECIDE(incircle, 8);
 }
+// The same under any request.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int incircle(
+    const double* pa, const double* pb, const double* pc, const double* pd, Request request) noexcept {
+  limb bits[8];
+  load_bits(pa, 2, bits), load_bits(pb, 2, bits + 2), load_bits(pc, 2, bits + 4);
+  load_bits(pd, 2, bits + 6);
+  SHEWCHUK_INTEGER_STAGE_OTHER_REQUESTS(incircle, 8, 4)
+  return incircle(pa, pb, pc, pd);
+}
 
-[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int insphere(const double* pa, const double* pb,
-                                                              const double* pc, const double* pd,
-                                                              const double* pe) noexcept {
+// insphere: the wide tier's determinant, never inlined: its integers are large
+// (docs/proofs/input-domain.md, section 7), and the stack they need must not
+// become part of the frame of the fast tiers.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_insphere(const Scaled<15>& s) noexcept {
+  return Tier<wide_tier>::insphere(s);
+}
+// Coordinates wider than the fast tiers: refused inside the floating-point
+// domain, decided by the wide tier outside.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_or_refused_insphere(
+    const Scaled<15>& s, const Extent& extent) noexcept {
+  if (in_floating_point_domain(5, extent.low, extent.high)) {
+    SHEWCHUK_INTEGER_STAGE_RECORD(s.width, 0);
+    return refused;
+  }
+  SHEWCHUK_INTEGER_STAGE_RECORD(s.width, wide_tier);
+  return wide_insphere(s);
+}
+// The exact sign (-1, 0, +1), with the sign convention of the public
+// function, or `refused`, or `not_finite`: the request
+// `exact_or_floating_point`.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int insphere(
+    const double* pa, const double* pb, const double* pc, const double* pd,
+    const double* pe) noexcept {
   limb bits[15];
   load_bits(pa, 3, bits), load_bits(pb, 3, bits + 3), load_bits(pc, 3, bits + 6);
   load_bits(pd, 3, bits + 9), load_bits(pe, 3, bits + 12);
   SHEWCHUK_INTEGER_STAGE_DECIDE(insphere, 15);
 }
+// The same under any request.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int insphere(
+    const double* pa, const double* pb, const double* pc, const double* pd,
+    const double* pe, Request request) noexcept {
+  limb bits[15];
+  load_bits(pa, 3, bits), load_bits(pb, 3, bits + 3), load_bits(pc, 3, bits + 6);
+  load_bits(pd, 3, bits + 9), load_bits(pe, 3, bits + 12);
+  SHEWCHUK_INTEGER_STAGE_OTHER_REQUESTS(insphere, 15, 5)
+  return insphere(pa, pb, pc, pd, pe);
+}
 
+#undef SHEWCHUK_INTEGER_STAGE_OTHER_REQUESTS
 #undef SHEWCHUK_INTEGER_STAGE_DECIDE
 
 }  // namespace integer_stage
