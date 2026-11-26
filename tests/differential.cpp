@@ -7,6 +7,13 @@
 //      mandatory for changes declared refactor-only: --require-identical);
 //   4. with --integer-stage, the value contract of the library's exact integer
 //      stage (see integer_stage_value() below).
+// With --comparator (third-party code, docs/comparators.md) the wrong signs are
+// also broken down by kind and by generator family, and a nonzero sign for an
+// exactly degenerate input is counted separately, not as wrong, for the
+// predicates the comparator declares as symbolically perturbed. A comparator
+// whose in-circle test does not depend on the orientation of the triangle is
+// compared with the exact sign times the exact orientation, and one that
+// requires an orientation is checked on the inputs that have it.
 // It also hashes the corpus and the returned values and can compare them with
 // the hashes recorded in corpus.h (--check-golden).
 //
@@ -17,10 +24,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "corpus.h"
 #include "generators.h"
 #include "implementations.h"
+#include "judge.h"
 #include "oracle.h"
 #include "stages.h"
 #include "width.h"
@@ -49,6 +58,14 @@ void usage() {
       "                           --check-golden the value hash must be the recorded one\n"
       "  --expect-mismatch        negative control: pass only if the implementation\n"
       "                           DISAGREES with the oracle at least once\n"
+      "  --comparator             third-party code: break the wrong signs down by kind and\n"
+      "                           by generator family; a nonzero sign for an exact zero is\n"
+      "                           not wrong where the implementation declares a symbolic\n"
+      "                           perturbation; fail on any wrong sign\n"
+      "  --known-wrong            with --comparator: this comparator is recorded as\n"
+      "                           returning wrong signs. Pass only if it still does, and\n"
+      "                           returns none on the uniform random families (which\n"
+      "                           shows that the wrapper's sign convention is right)\n"
       "  --dump-sample            print the corpus with oracle signs and exit\n"
       "  --list                   list implementations and tiers\n");
 }
@@ -72,6 +89,20 @@ struct Totals {
   long value_differences = 0;     // value bits differ from the reference
   long contract_violations = 0;   // --integer-stage: not the value the contract fixes
   long integer_stage_cases = 0;   // --integer-stage: cases the integer stage must decide
+  // --comparator: the wrong results by kind, and the perturbed zeros.
+  long opposite_sign = 0;      // exact sign nonzero, the opposite returned
+  long zero_for_nonzero = 0;   // exact sign nonzero, zero returned
+  long nonzero_for_zero = 0;   // exact sign zero, a nonzero sign returned
+  long non_finite = 0;         // NaN or an infinity returned
+  long perturbed_zeros = 0;    // exact sign zero, nonzero by declared perturbation
+  long undefined = 0;          // unoriented predicate on a collinear or coplanar base
+  long precondition = 0;       // outside the implementation's stated precondition
+};
+
+// --comparator: what one generator family saw.
+struct FamilyTotals {
+  std::string name;
+  long cases = 0, wrong = 0, perturbed_zeros = 0;
 };
 
 // The value the library must return now that it has the exact integer stage
@@ -106,6 +137,7 @@ int main(int argc, char** argv) {
   long custom_cases = 0;
   bool check_golden = false, require_identical = false, expect_mismatch = false;
   bool integer_stage = false;
+  bool comparator = false, known_wrong = false;
   bool dump_sample = false;
 
   for (int i = 1; i < argc; i++) {
@@ -133,6 +165,10 @@ int main(int argc, char** argv) {
       integer_stage = true;
     } else if (arg == "--expect-mismatch") {
       expect_mismatch = true;
+    } else if (arg == "--comparator") {
+      comparator = true;
+    } else if (arg == "--known-wrong") {
+      known_wrong = true;
     } else if (arg == "--dump-sample") {
       dump_sample = true;
     } else if (arg == "--list") {
@@ -153,6 +189,15 @@ int main(int argc, char** argv) {
   }
   if (integer_stage && require_identical) {
     std::printf("--integer-stage and --require-identical exclude each other\n");
+    return 2;
+  }
+  if (known_wrong && !comparator) {
+    std::printf("--known-wrong needs --comparator\n");
+    return 2;
+  }
+  if (comparator && (require_identical || integer_stage || expect_mismatch)) {
+    std::printf("--comparator excludes --require-identical, --integer-stage and "
+                "--expect-mismatch\n");
     return 2;
   }
   if (custom_cases && check_golden) {
@@ -186,6 +231,7 @@ int main(int argc, char** argv) {
   const bool is_reference = impl == &reference;
 
   Totals totals[NUM_PREDS];
+  std::vector<FamilyTotals> families;
   Hash64 corpus_hash, value_hash;
   const int max_reports = 5;
   int reports = 0;
@@ -201,14 +247,44 @@ int main(int argc, char** argv) {
     const double reference_value = is_reference ? value : reference.call(pred, c);
     value_hash.add(bits_of(value));
 
-    // A NaN has no sign: never let it pass as "zero".
-    const bool wrong = !std::isfinite(value) || sign_of(value) != expected;
+    if (families.empty() || families.back().name != generator.name) {
+      families.push_back({generator.name});
+    }
+    FamilyTotals& family = families.back();
+    family.cases++;
+
+    // What the implementation declares about itself (symbolic perturbation,
+    // orientation conventions: comparators only) is taken into account here.
+    const Judgement judgement = judge(*impl, pred, c, value, expected);
+    const bool wrong = judgement.verdict == Verdict::WRONG;
+    if (judgement.verdict == Verdict::PERTURBED_ZERO) {
+      t.perturbed_zeros++;
+      family.perturbed_zeros++;
+    } else if (judgement.verdict == Verdict::UNDEFINED) {
+      t.undefined++;
+    } else if (judgement.verdict == Verdict::OUTSIDE_PRECONDITION) {
+      t.precondition++;
+    }
     if (wrong) {
       t.oracle_mismatches++;
+      family.wrong++;
+      if (!std::isfinite(value)) {
+        t.non_finite++;
+      } else if (judgement.asked == 0) {
+        t.nonzero_for_zero++;
+      } else if (value == 0.0) {
+        t.zero_for_nonzero++;
+      } else {
+        t.opposite_sign++;
+      }
       if (reports < max_reports) {
         reports++;
-        std::printf("  WRONG SIGN in %s: returned %a, exact sign is %d\n", generator.name.c_str(),
+        std::printf("  WRONG SIGN in %s: returned %a, exact sign is %d", generator.name.c_str(),
                     value, expected);
+        if (judgement.asked != expected) {
+          std::printf(" (asked for %d: exact sign x orientation)", judgement.asked);
+        }
+        std::printf("\n");
         print_case(pred, c);
       }
     }
@@ -252,6 +328,41 @@ int main(int argc, char** argv) {
   }
   std::printf("%-9s %10ld %16ld %18ld %19ld\n", "total", sum.cases, sum.oracle_mismatches,
               sum.reference_mismatches, sum.value_differences);
+  if (comparator) {
+    std::printf("\nwrong results by kind, and exact zeros returned as a nonzero sign by the "
+                "implementation's declared symbolic perturbation (not counted as wrong):\n");
+    std::printf("%-9s %14s %17s %17s %11s %16s\n", "predicate", "opposite sign",
+                "zero for nonzero", "nonzero for zero", "non-finite", "perturbed zeros");
+    for (int p = 0; p < NUM_PREDS; p++) {
+      const Totals& t = totals[p];
+      std::printf("%-9s %14ld %17ld %17ld %11ld %16ld%s", PRED_NAME[p], t.opposite_sign,
+                  t.zero_for_nonzero, t.nonzero_for_zero, t.non_finite, t.perturbed_zeros,
+                  impl->perturbs_zero[p] ? "  (symbolically perturbed)" : "");
+      if (impl->unoriented[p]) {
+        std::printf("  (compared with exact sign x exact orientation of the other points; "
+                    "%ld cases skipped, the others being collinear or coplanar)",
+                    t.undefined);
+      }
+      if (impl->required_base_orientation[p] != 0) {
+        std::printf("  (requires the other points to have orientation %+d in the 1996 "
+                    "convention; %ld cases outside that precondition skipped)",
+                    impl->required_base_orientation[p], t.precondition);
+      }
+      std::printf("\n");
+    }
+    std::printf("\ngenerator families with wrong results (the corpus stays inside the input "
+                "domain of the 1996 paper):\n");
+    bool any = false;
+    for (const FamilyTotals& family : families) {
+      if (family.wrong == 0) continue;
+      any = true;
+      std::printf("  %-48s %8ld of %8ld (%.2f%%)\n", family.name.c_str(), family.wrong,
+                  family.cases,
+                  100.0 * static_cast<double>(family.wrong) / static_cast<double>(family.cases));
+    }
+    if (!any) std::printf("  none\n");
+    std::printf("\n");
+  }
   std::printf("corpus hash: %016" PRIx64 "\n", corpus_hash.value());
   std::printf("value hash:  %016" PRIx64 "\n", value_hash.value());
   if (integer_stage) {
@@ -300,6 +411,33 @@ int main(int argc, char** argv) {
       ok = false;
     } else {
       std::printf("negative control detected: %ld wrong signs, as expected\n",
+                  sum.oracle_mismatches);
+    }
+  } else if (known_wrong) {
+    // The uniform random families are far from every filter threshold and
+    // every exponent limit: a wrong sign there means the wrapper's argument
+    // order or sign convention is wrong, not the comparator.
+    long uniform_wrong = 0;
+    for (const FamilyTotals& family : families) {
+      const std::string suffix = "/uniform";
+      if (family.name.size() >= suffix.size() &&
+          family.name.compare(family.name.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        uniform_wrong += family.wrong;
+      }
+    }
+    if (uniform_wrong != 0) {
+      std::printf("FAIL: %ld wrong signs on uniform random inputs: the wrapper's sign convention "
+                  "or argument order is wrong\n",
+                  uniform_wrong);
+      ok = false;
+    }
+    if (sum.oracle_mismatches == 0) {
+      std::printf("FAIL: this comparator is recorded as returning wrong signs "
+                  "(docs/comparators.md) and returned none: update the record\n");
+      ok = false;
+    } else {
+      std::printf("KNOWN: this comparator returns %ld wrong signs on the corpus, as recorded in "
+                  "docs/comparators.md\n",
                   sum.oracle_mismatches);
     }
   } else if (sum.oracle_mismatches != 0) {

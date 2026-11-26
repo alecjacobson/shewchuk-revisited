@@ -113,6 +113,53 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -j 4
 
+  # The opt-in comparators (docs/comparators.md): third-party code downloaded
+  # at configure time, each wrapper checked against the exact oracle. Linux is
+  # x86-64 (Indirect_Predicates built with AVX2 and FMA), macOS is arm64.
+  comparators:
+    name: comparators ${{ matrix.target.name }}
+    runs-on: ${{ matrix.target.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - {name: linux gcc, os: ubuntu-latest, cc: gcc, cxx: g++}
+          - {name: linux clang, os: ubuntu-latest, cc: clang, cxx: clang++}
+          - {name: macos apple-clang, os: macos-latest, cc: clang, cxx: clang++}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GMP, MPFR and Boost (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev libmpfr-dev libboost-dev
+      - name: Install GMP, MPFR and Boost (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gmp mpfr boost
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_C_COMPILER=${{ matrix.target.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.target.cxx }}
+          -DCMAKE_BUILD_TYPE=Release
+          -DSHEWCHUK_REQUIRE_GMP=ON
+          -DSHEWCHUK_BUILD_COMPARATORS=ON
+      - name: Every comparator was built
+        run: >
+          grep -c "define SHEWCHUK_HAVE_COMPARATOR"
+          build/comparators/generated/shewchuk_comparator_info.h | grep -x 4
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -j 4
+      - name: Comparators against the oracle
+        if: always()
+        run: ctest --test-dir build -R "^comparator[.]" --verbose
+      - name: Benchmark smoke run of every comparator
+        if: always()
+        run: |
+          for name in gmp_rational geogram cgal indirect geometric_predicates; do
+            build/bench/bench_predicates --impl $name --smoke --out build/smoke-$name.json
+          done
+
   macos:
     name: macos apple-clang Release
     runs-on: macos-latest

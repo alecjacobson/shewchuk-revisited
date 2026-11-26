@@ -82,7 +82,10 @@ it.
    optimization.
 8. **The checksum.** Every run sums the signs it gets and compares the sum
    with the reference's on the same inputs. A mismatch is an error (exit
-   status 1): a benchmark of a wrong implementation is not a result.
+   status 1): a benchmark of a wrong implementation is not a result. The one
+   exception is third-party code measured as a [comparator](#comparators):
+   it is measured anyway, and the mismatch is recorded in the result and
+   marked in every table.
 9. **Everything is recorded.** The JSON (laid out like Google Benchmark's:
    `context` and `benchmarks`, plus `workloads`) carries the machine,
    compiler, flags, git revision, counter backend, load average, the workload
@@ -287,6 +290,89 @@ shared). Their run-to-run variation of cycles per call is 0.2% to 0.3% in the
 median over the 50 benchmarks and at most 1.1% to 1.4%, depending on the
 compiler. On a busier machine expect more discarded chunks and a wider
 spread; `bench_suite.py` prints both.
+
+## Comparators
+
+Other exact implementations, measured with this harness under the same
+protocol: same compiler and `-O3`, same never-repeated inputs, same call
+through a function pointer into separately compiled code. What they are,
+their pinned versions, licenses and flags, their exactness results and the
+caveats of the comparison are in [comparators.md](comparators.md); read its
+"Fairness" section before quoting a number from here.
+
+<!-- comparator-table:begin -->
+**Apple clang 21**, CPU cycles per call:
+
+| predicate | workload | 1996 | this library | Indirect_Predicates | Geogram PCK | CGAL EPICK | GeometricPredicates | GMP rationals |
+|---|---|--:|--:|--:|--:|--:|--:|--:|
+| `orient2d` | `uniform` | 34.2 | 5.0 | **4.1** | 43.9 | 27.8 | 25.5 | 9,151 |
+| `orient2d` | `mix_easy` | 35.0 | 6.2 | **5.8** | 48.6 | 37.9 | 26.6 | 9,298 |
+| `orient2d` | `mix_surface` | 55.8 | **41.4** | 45.8 | 161 | 313 | 54.8 | 9,406 |
+| `orient2d` | `stage_D` | 220 | **79.1** | 260 | 313 | 662 | 153 | 10,750 |
+| `orient2d` | `wide_exponents` | 39.2 | 10.4 | **6.4** | 166 | 73.0 | 30.6 | 12,960 |
+| `orient3d` | `uniform` | 13.6 | **11.0** | 11.1 | 56.3 | 65.3 | 19.1 | 36,217 |
+| `orient3d` | `mix_easy` | 26.6 | **14.0** | 22.6 | 77.5 | 103 | 29.9 | 36,290 |
+| `orient3d` | `mix_surface` | 378 | **82.2** | 331 | 651 | 1,154 | 334 | 36,186 |
+| `orient3d` | `stage_D` | 3,403 | **203** | 2,871 | 1,951 | 2,090 | 3,931† | 39,451 |
+| `orient3d` | `wide_exponents` | 107 | 108 | **77.2** | 2,192 | 278 | 126† | 50,619 |
+| `incircle` | `uniform` | 15.3 | 11.8 | 16.1 | 96.0‡ | 53.4 | **11.5** | 46,249 |
+| `incircle` | `mix_easy` | 55.2 | **14.0** | 76.0 | 273‡ | 79.1 | 50.7 | 46,664 |
+| `incircle` | `mix_surface` | 1,175 | **71.3** | 1,721 | 5,206‡ | 750 | 1,094 | 46,611 |
+| `incircle` | `stage_D` | 15,487 | **204** | 8,641 | 30,203‡ | 1,635 | 8,603 | 52,710 |
+| `incircle` | `wide_exponents` | 1,729 | 1,625 | 22,302 | 147,149‡ | **333** | 722 | 60,621 |
+| `insphere` | `uniform` | 40.8 | 30.7 | **28.7** | 53.1‡ | 96.3 | 35.9 | 203,726 |
+| `insphere` | `mix_easy` | 203 | **36.4** | 157 | 212‡ | 180 | 211 | 205,021 |
+| `insphere` | `mix_surface` | 4,723 | **172** | 3,741 | 4,565‡ | 2,400 | 5,079 | 204,018 |
+| `insphere` | `stage_D` | 31,731 | **626** | 6,441 | 17,858‡ | 5,933 | 34,604 | 218,368 |
+| `insphere` | `wide_exponents` | 854 | **129** | 7,888 | 22,306‡ | 745 | 931 | 250,512 |
+
+**GCC 16**, CPU cycles per call:
+
+| predicate | workload | 1996 | this library | Indirect_Predicates | Geogram PCK | CGAL EPICK | GeometricPredicates | GMP rationals |
+|---|---|--:|--:|--:|--:|--:|--:|--:|
+| `orient2d` | `uniform` | 44.2 | **5.0** | **5.0** | 40.7 | 29.4 | 25.4 | 9,490 |
+| `orient2d` | `mix_easy` | 45.0 | **6.2** | 6.4 | 45.4 | 38.2 | 26.2 | 9,497 |
+| `orient2d` | `mix_surface` | 57.9 | **41.7** | 45.7 | 158 | 280 | 50.1 | 9,590 |
+| `orient2d` | `stage_D` | 225 | **110** | 191 | 316 | 570 | 143 | 10,867 |
+| `orient2d` | `wide_exponents` | 49.6 | 10.5 | **6.9** | 168 | 69.0 | 29.6 | 13,189 |
+| `orient3d` | `uniform` | 39.8 | 11.3 | **11.1** | 54.3 | 61.2 | 15.2 | 37,278 |
+| `orient3d` | `mix_easy` | 52.0 | **14.9** | 22.1 | 74.7 | 96.1 | 24.6 | 37,232 |
+| `orient3d` | `mix_surface` | 371 | **99.8** | 311 | 631 | 1,075 | 296 | 37,275 |
+| `orient3d` | `stage_D` | 3,422 | **234** | 4,068 | 1,977 | 1,889 | 3,682† | 40,374 |
+| `orient3d` | `wide_exponents` | 133 | 108 | **88.4** | 2,246 | 262 | 102† | 51,983 |
+| `incircle` | `uniform` | 39.8 | **12.1** | 39.8 | 81.3‡ | 39.1 | 16.4 | 47,465 |
+| `incircle` | `mix_easy` | 79.0 | **14.9** | 87.3 | 263‡ | 61.1 | 52.0 | 47,664 |
+| `incircle` | `mix_surface` | 1,143 | **84.5** | 1,354 | 5,285‡ | 671 | 1,018 | 47,745 |
+| `incircle` | `stage_D` | 15,713 | **254** | 7,633 | 31,363‡ | 1,533 | 7,627 | 53,305 |
+| `incircle` | `wide_exponents` | 1,758 | 1,621 | 18,978 | 152,996‡ | **290** | 652 | 61,596 |
+| `insphere` | `uniform` | 70.8 | **32.5** | 59.0 | 56.1‡ | 80.1 | 33.9 | 210,198 |
+| `insphere` | `mix_easy` | 235 | **38.4** | 252 | 215‡ | 167 | 193 | 209,356 |
+| `insphere` | `mix_surface` | 4,814 | **190** | 5,607 | 4,594‡ | 2,499 | 4,646 | 209,920 |
+| `insphere` | `stage_D` | 32,372 | **718** | 9,486 | 18,318‡ | 5,907 | 31,344 | 222,115 |
+| `insphere` | `wide_exponents` | 901 | **137** | 10,982 | 23,240‡ | 729 | 852 | 255,923 |
+<!-- comparator-table:end -->
+
+† the comparator's sign checksum differs from the reference's on this
+workload: it returned wrong signs. ‡ the comparator answers a different
+question by design (Geogram's in-circle and in-sphere tests break ties
+symbolically and use other orientation conventions), so no checksum is
+compared. Bold: the fastest of the row among the entries whose signs were
+checked. Medians of 10 fresh processes; every number includes the harness's
+loop and call (about 2 to 3 cycles).
+
+The table is generated by `tools/comparator_table.py` from
+`bench/results/<name>-apple-m4-<compiler>.json`, and the test
+`bench.comparator_table` fails if this page and the files disagree.
+`tools/comparator_table.py --losses` lists every benchmark, of all
+workloads, on which a comparator is faster than the library. Regenerate a
+file with the build directories of the next section configured with
+`-DSHEWCHUK_BUILD_COMPARATORS=ON`:
+
+```sh
+tools/bench_suite.py --build-dir build-bench-appleclang --impl indirect --runs 10 \
+  --out bench/results/indirect-apple-m4-appleclang-21.json
+# gmp_rational: add --scale 0.05 (a full pass takes seven minutes)
+```
 
 ## Adding an implementation
 

@@ -22,6 +22,7 @@ Options:
 |---|---|
 | `-DSHEWCHUK_DEEP_TESTS=ON` | also registers the deep tier (`deep.*` tests, 20x the cases, about a minute) |
 | `-DSHEWCHUK_REQUIRE_GMP=ON` | configuration fails if GMP is missing, instead of skipping the GMP cross-check |
+| `-DSHEWCHUK_BUILD_COMPARATORS=ON` | downloads and builds third-party exact predicates and registers the `comparator.*` tests ([comparators.md](comparators.md)) |
 | `-DSHEWCHUK_SANITIZE=address,undefined` | builds the library and the tests (not the pristine reference) with these sanitizers; `thread` for ThreadSanitizer |
 
 GMP (`libgmp-dev`, `brew install gmp`) and Python 3 are optional; they enable
@@ -65,6 +66,15 @@ Tests of the library (`src/predicates.cpp`):
 | `library.no_fma` | the library's object code contains no fused multiply-add and no call to `fma()` (skipped if no disassembler is found or the architecture is not arm64 / x86-64) |
 | `negative_control.no_fma` | that check IS triggered by the contracted reference build |
 | `library.refuses_x87` | compiled for x87 extended-precision arithmetic (the build's flags plus `-mfpmath=387`), `src/predicates.cpp` stops at its `#error` on `FLT_EVAL_METHOD` (skipped where the compiler has no such mode: not x86, or clang on x86-64) |
+
+Tests of third-party code ([comparators.md](comparators.md)), registered with
+`-DSHEWCHUK_BUILD_COMPARATORS=ON` (`comparator.gmp_rational` whenever GMP is
+found):
+
+| Test | What it proves |
+|---|---|
+| `comparator.geogram`, `.cgal`, `.indirect`, `.gmp_rational` | the comparator, through its wrapper, has zero wrong signs against the oracle on the quick corpus (`gmp_rational`: on a tenth of it), which also shows that the wrapper adapts the argument order and the sign convention correctly. What a comparator declares about itself is honoured: Geogram's symbolically perturbed zeros are counted separately, its orientation-free in-circle test is compared with the exact sign times the exact orientation, and its in-sphere test is checked on the inputs that satisfy its precondition |
+| `comparator.geometric_predicates` | GeometricPredicates is recorded as returning wrong signs (its `orient3d`). The test prints them by kind and by generator family and fails if there are none any more, or if there is one on uniform random input, where a wrong sign would mean a wrong wrapper |
 
 A skipped test is reported as skipped, never as passed.
 
@@ -127,6 +137,10 @@ stage declines them and stages B, Bx, C and D of the library stay covered.
 - `tests/generators.*`: the stage-targeted, deterministic input generators.
 - `tests/differential.cpp`: the driver. `differential --list` shows the
   implementations and tiers; `differential --impl NAME` runs one.
+- `comparators/`: wrappers around third-party predicates and the CMake code
+  that downloads them (off by default). `tests/judge.h` holds the rule by
+  which a returned value is judged, including what a comparator declares
+  about its own conventions.
 - `src/test_hooks.h`: the library's test-only build. The same source and
   flags as the shipped library, compiled a second time with
   `SHEWCHUK_PREDICATES_TEST_HOOKS`: different symbol names, a record of the
