@@ -478,28 +478,31 @@ Theorems 1 and 2, or a zero), a sign from the integer stage, or a value of a
 
 The integer stage's tiers are instances of one template, `Tier<D>`, whose
 proof ([integer-stage.md](integer-stage.md), sections 3 to 6) is for every
-`D`: tier `D` holds every intermediate for widths up to `64 D - 3`. The
+`D`: tier `D` holds every intermediate for widths up to `64 D - 3`. The wide
+tier has storage for 33 limbs per difference and computes with the smallest
+`D` that holds the width at hand (same document, section 3). The
 largest width of a finite input is 2098 (highest set bit at most 2^1023,
 lowest at least 2^-1074, `scale()`). `wide_tier = 33` gives
 `64 * 33 - 3 = 2109 >= 2098`; 32 would give 2045. `static_assert`s check
 both, and `tier_holds_every_intermediate(33, 2109)`.
 
-The wide tier works on fixed-size integers on the stack; nothing is
-allocated on the heap anywhere in the library. Its largest value is the
-`insphere` determinant, `5 * 33` limbs (1320 bytes). The stack frames of the
-functions that evaluate the wide tier's determinants, as the compilers report
-them (`-fstack-usage`), in bytes:
+The wide tier works on integers in fixed-size storage on the stack (it uses
+as many of their limbs as the width needs); nothing is allocated on the heap
+anywhere in the library. Its largest value is the `insphere` determinant,
+`5 * 33` limbs (1320 bytes). The stack frames of the functions that evaluate
+the wide tier's determinants, as the compilers report them
+(`-fstack-usage`), in bytes:
 
 | wide tier of | GCC 16 `-O3` | Apple clang `-O3` | GCC 16 `-O0` | Apple clang `-O0` |
 |---|--:|--:|--:|--:|
-| `orient2d` | 3,872 | 5,376 | 10,816 | 14,176 |
-| `orient3d` | 8,112 | 9,968 | 34,704 | 42,944 |
-| `incircle` | 11,776 | 11,840 | 42,496 | 48,192 |
-| `insphere` | 21,840 | 25,296 | 113,968 | 130,448 |
+| `orient2d` | 3,360 | 3,920 | 10,944 | 12,384 |
+| `orient3d` | 7,424 | 12,016 | 35,440 | 39,104 |
+| `incircle` | 11,360 | 17,024 | 43,408 | 46,144 |
+| `insphere` | 21,360 | 27,760 | 116,512 | 127,040 |
 
 They are fixed: the code has no recursion and no array whose size depends on
-the input. Below each of them there is one frame of `mul_out_of_line`, at
-most 464 bytes (its result is written to the caller's frame); above them the
+the input. Below each of them there is one frame of `mul_limbs`, at most 448
+bytes (its result is written to the caller's frame); above them the
 frames of the stage's entry functions (at most 2,100 bytes optimized) and of
 the predicate.
 
@@ -518,23 +521,25 @@ the largest frame the library had before, and still has, holds the arrays of
   its own, which the wide tier never runs together with: the worst case stays
   at about 214 KB.
 - clang inlines it into `shewchuk_insphere()`, whose frame is therefore
-  214 KB on every call; the wide tier's 25 KB and the entry functions' 2 KB
-  come on top: about 242 KB, up from about 216 KB.
+  214 KB on every call; the wide tier's 28 KB and the entry functions' 2 KB
+  come on top: about 244 KB, up from about 216 KB.
 - Unoptimized, the deepest chain is still the exact stage (about 215 KB);
-  the wide tier's is about 135 KB.
+  the wide tier's is about 132 KB.
 
 These numbers are measurements of three compilers on one target, not a
 guarantee for every compiler; the wide tier's functions are never inlined
 into the fast tiers (`SHEWCHUK_INTEGER_STAGE_NOINLINE`), so its frames are
 paid only by calls that reach it.
 
-The wide tier is slow: its integers have up to 10560 bits and the
-multiplication is the schoolbook one. On an Apple M4 (Apple clang, wall
-clock, coordinates with exponents from the whole range and one repeated
-point, so that no filter decides) a call takes about 1.5 µs (`orient2d`),
-8.5 µs (`orient3d`), 16 µs (`incircle`) and 51 µs (`insphere`). Tiers 4
-and 5 take the inputs up to 317 bits; between them and the 33 limbs of the
-wide tier there is nothing yet.
+The wide tier is slower per limb than the fast tiers: its loops have
+run-time bounds and the multiplication is the schoolbook one. What a call
+costs depends on the width. On an Apple M4 (Apple clang, wall clock, one
+repeated point, so that no filter decides): with exponents from the whole
+range (integers of up to 10560 bits) about 0.8 µs (`orient2d`), 6.7 µs
+(`orient3d`), 10 µs (`incircle`) and 42 µs (`insphere`), where the
+tier computed with all 33 limbs before it chose their number: 1.6, 9.3, 17.6
+and 54 µs; with exponents from 2^210 to 2^800 (about 640 bits wide, ten or
+eleven limbs per difference) about 0.15, 0.9, 1.3 and 5 µs.
 
 It is reached only by inputs that are wider than 317 bits, outside the
 floating-point domain, and not decided by the first filter under its guard.

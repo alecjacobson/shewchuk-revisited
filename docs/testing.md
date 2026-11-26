@@ -53,7 +53,7 @@ Tests of the library (`src/predicates.cpp`):
 | `differential.library_portable` | the same, with the same hash, for the library built with the integer stage's portable 64x64->128 multiplication (the one compilers without a 128-bit integer use) |
 | `library.stages` | every stage of the library decides enough cases: at least 2% for the stages before the integer stage and for the integer stage, at least 0.5% (and 200 cases) for the stages behind it, which only inputs too wide for the integer stage reach. Every single case is decided by the stage it must be decided in: the reference's stage, or the integer stage if the reference's stage comes after it and the case's width is at most 317. For orient2d the library has one first test where the reference has two (A0 and A); a call that test decides is counted as A0 if its two products have opposite signs or one is zero, the class the reference decides in A0, and as A otherwise. **The input-domain guard is never in the way of the corpus**, which is inside the range of the 1996 paper: every case the reference decides in its first test is decided by the library's first test with its guard holding (exceptions, with the reference's value: `orient2d` with two zero products, which leaves by a branch of its own, and `insphere` with every coordinate below 2^-100, or with coordinates that span more than 253 bits, whose first filter is confirmed by the domain check; these must stay below 0.1% of the cases), every case is inside the floating-point domain, and the wide tier decides none |
 | `integer_stage.unit`, `.portable`, `.checked`, `.checked_portable` | the integer stage on its own (`tests/test_integer_stage.cpp`), in four builds: default and portable limb arithmetic, each with and without run-time verification of the proof's bounds. See below |
-| `integer_stage.widths` | the bit widths of `docs/proofs/integer-stage.md`, re-derived with exact integers by `tools/integer_stage_widths.py`, agree with the formulas in `src/integer_stage.h` and fit the limbs of every tier |
+| `integer_stage.widths` | the bit widths of `docs/proofs/integer-stage.md`, re-derived with exact integers by `tools/integer_stage_widths.py`, agree with the formulas in `src/integer_stage.h` and fit the limbs of every tier, and for every width a finite input can have the number of limbs the wide tier works with holds every intermediate |
 | `library.orient2d_first_test` | the library's first test of orient2d on 331776 combinations of special products the corpus does not contain (zeros of both signs, equal and opposite products, subnormal, huge, overflowed to infinity): the exact sign on every one; inside the window of the test's guard, and for two zero products, the reference's value in the reference's stage; outside the window the first test decides nothing by itself. The 1996 code is wrong on thousands of these |
 | `library.input_domain` | **the exact sign for every finite input.** See below |
 | `library.expansions` | `fast_expansion_sum_zeroelim`, `scale_expansion_zeroelim` and `estimate` return the same components as the reference's routines on random and adversarial expansions, up to the largest lengths any predicate uses |
@@ -160,7 +160,10 @@ built without the integer stage (`differential.library_expansion_only`).
 `test_integer_stage` calls the stage directly (the header is compiled into
 the test):
 
-- limb arithmetic against the oracle's big integers;
+- limb arithmetic against the oracle's big integers, for the fixed sizes of
+  the fast tiers and for the wide tier's run-time sizes (every number of
+  limbs from 1 to 66 for sums, every product size of every number of limbs
+  per difference from 1 to 33);
 - the scaling of doubles to integers against an independent decomposition:
   zeros, negative zero, subnormals, the largest doubles, random bit patterns
   from the whole format, infinities and NaNs;
@@ -175,8 +178,10 @@ the test):
 - worst-case magnitudes: every coordinate at the largest value of the width,
   with every sign pattern, at widths exactly at each fast tier's limit and
   one past it (and around the limb boundaries), anywhere in the exponent
-  range of a double; and for the wide tier at widths from 318 to 2098, the
-  largest a finite input can have;
+  range of a double; for the wide tier at widths from 318 to 2098, the
+  largest a finite input can have; and the wide tier run directly with every
+  number of limbs per difference from 1 to 33, at the narrowest and the
+  widest width of that number;
 - a negative control: a tier forced onto inputs 5 bits too wide returns wrong
   signs;
 - non-finite coordinates are reported as such under every request, and the

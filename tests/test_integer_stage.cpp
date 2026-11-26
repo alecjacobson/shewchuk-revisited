@@ -26,7 +26,8 @@
 //      A case one past the widest fast tier is refused if it is inside the
 //      floating-point domain (tests/width.h) and decided by the wide tier
 //      if it is not; the wide tier is also run at the largest width there
-//      is, and every case is run under every request (Request) of the stage;
+//      is, and with every number of limbs it can work with, and every case is
+//      run under every request (Request) of the stage;
 //   5. negative control: a tier evaluated on inputs wider than its limit IS
 //      caught returning wrong signs (and, in the checked build, IS caught by
 //      the bound checks);
@@ -193,6 +194,66 @@ void test_mul(Rng& r, int count) {
   }
 }
 
+// The wide tier's integers: the same operations on a number of limbs chosen
+// at run time.
+template <int K>
+BigInt value_of(const stage::Var<K>& a) {
+  BigInt value;
+  for (int i = 0; i < a.n; i++) value = value + from_limb(a.w[i]).shifted_left(64u * i);
+  if (a.w[a.n - 1] >> 63) value = value - pow2(64u * a.n);
+  return value;
+}
+
+template <int K>
+stage::Var<K> random_var(Rng& r, int n, int headroom) {
+  stage::Var<K> a;
+  a.n = n;
+  for (int i = 0; i < n; i++) {
+    const int kind = static_cast<int>(r.below(6));
+    a.w[i] = kind == 0 ? 0 : kind == 1 ? ~stage::limb{0} : r.u64();
+  }
+  const stage::limb top = a.w[n - 1];
+  const stage::limb sign_fill = (top >> 63) ? ~stage::limb{0} << (63 - headroom) : 0;
+  a.w[n - 1] = (top >> headroom) | sign_fill;
+  return a;
+}
+
+// Every number of limbs from 1 to the storage of a Var<2> (sums) and every
+// pair of sizes of a Var<2> and a Var<3> a tier of D limbs multiplies
+// (2D x 2D and 2D x 3D; D x D and D x 2D are among the sizes of the first).
+void test_run_time_limbs(Rng& r) {
+  for (int n = 1; n <= 2 * stage::wide_tier; n++) {
+    for (int i = 0; i < 12; i++) {
+      const int headroom = r.range(1, 63);
+      const stage::Var<2> a = random_var<2>(r, n, headroom), b = random_var<2>(r, n, headroom);
+      const stage::Var<2> sum = stage::add(a, b), difference = stage::sub(a, b);
+      CHECK(sum.n == n && difference.n == n);
+      CHECK(value_of(sum) == value_of(a) + value_of(b));
+      CHECK(value_of(difference) == value_of(a) - value_of(b));
+      CHECK(stage::sign(a) == value_of(a).sign());
+    }
+  }
+  for (int D = 1; D <= stage::wide_tier; D++) {
+    for (int i = 0; i < 3; i++) {
+      const stage::Var<2> a = random_var<2>(r, 2 * D, r.range(0, 63));
+      const stage::Var<2> b = random_var<2>(r, i == 0 ? D : 2 * D, r.range(0, 63));
+      const stage::Var<3> c = random_var<3>(r, i == 1 ? D : 3 * D, r.range(0, 63));
+      const stage::Var<4> ab = stage::mul(a, b);
+      const stage::Var<5> ac = stage::mul(a, c);
+      const stage::Var<5> ca = stage::mul(c, a);
+      CHECK(ab.n == a.n + b.n && ac.n == a.n + c.n && ca.n == ac.n);
+      CHECK(value_of(ab) == value_of(a) * value_of(b));
+      CHECK(value_of(ac) == value_of(a) * value_of(c));
+      CHECK(value_of(ca) == value_of(a) * value_of(c));
+    }
+  }
+  // The most negative value times itself: the largest product there is.
+  stage::Var<1> most_negative;
+  most_negative.n = 2;
+  most_negative.w[0] = 0, most_negative.w[1] = stage::limb{1} << 63;
+  CHECK(value_of(stage::mul(most_negative, most_negative)) == pow2(254));
+}
+
 void test_limb_arithmetic() {
   std::printf("limb arithmetic: %s\n", stage::limb_arithmetic);
   Rng r(0x1e57);
@@ -261,6 +322,8 @@ void test_limb_arithmetic() {
   // The most negative value times itself: the largest product there is.
   stage::Int<2> most_negative = {{0, stage::limb{1} << 63}};
   CHECK(value_of(stage::mul(most_negative, most_negative)) == pow2(254));
+
+  test_run_time_limbs(r);
 }
 
 // ---------------------------------------------------------------------------
@@ -620,6 +683,35 @@ int forced_tier_sign(Pred pred, const double* c) {
   }
 }
 
+// The wide tier works with as many limbs as the width needs: every number of
+// limbs from 1 to 33 is run here at the widest width it is used for and at
+// the narrowest, on worst-case inputs, whatever the stage would do with such
+// a width. (In the checked build every bound of the proof is verified on
+// each of these calls, for that number of limbs.)
+void test_wide_tier_at_every_size(Rng& r) {
+  long cases = 0;
+  for (int D = 1; D <= stage::wide_tier; D++) {
+    const int narrowest = D == 1 ? 1 : stage::max_width(D - 1) + 1;
+    const int widest = D < stage::wide_tier ? stage::max_width(D) : stage::max_finite_width;
+    CHECK(stage::limbs_for_width(narrowest) == D && stage::limbs_for_width(widest) == D);
+    for (const int W : {narrowest, widest}) {
+      for (int p = 0; p < NUM_PREDS; p++) {
+        const Pred pred = static_cast<Pred>(p);
+        double c[MAX_COORDS];
+        for (int i = 0; i < 4; i++) {
+          extreme_case(r, pred, W, r.range(-1074, 1024 - W), r.u64(),
+                       static_cast<int>(r.below(NUM_COORDS[p])), i % 2 == 1, c);
+          CHECK(width_of(c, NUM_COORDS[p]) == W);
+          CHECK(forced_tier_sign<stage::wide_tier>(pred, c) == oracle_sign(pred, c));
+          cases++;
+        }
+      }
+    }
+  }
+  std::printf("the wide tier with 1 to %d limbs per difference: %ld worst-case inputs\n",
+              stage::wide_tier, cases);
+}
+
 // The worst-case inputs must have teeth: evaluated in a tier a few bits too
 // narrow for them, they must produce wrong signs, and the checked build must
 // see bounds violated. Otherwise the tests above could not notice a limb
@@ -784,6 +876,10 @@ int main(int argc, char** argv) {
   test_zeros();
   test_non_finite();
   test_extremes(deep ? 1L << 16 : 1L << 11);
+  {
+    Rng r(0x51de);
+    test_wide_tier_at_every_size(r);
+  }
   test_corpus(*tier);
 #ifdef SHEWCHUK_INTEGER_STAGE_CHECKED
   std::printf("\nrun-time verification of the proof's bounds: %ld violations\n",
