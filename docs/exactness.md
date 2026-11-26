@@ -108,8 +108,8 @@ zero, and the sign of a zero does not affect a comparison). If `det` or `e` is
 NaN every one of the comparisons is false. So the two tests are the same
 predicate on all doubles, for every `e`. The same holds with `>=` in place of
 `>`. The first filters of orient3d, incircle and insphere use `>`, as in 1996.
-The later stages, which use `>=`, keep the two comparisons: there
-the single comparison did not measure faster.
+orient2d's merged first test (below) uses `>=`, as its filter does in 1996.
+The later stages, which also use `>=`, are written as in 1996.
 
 **`fabs` in the permanent.** The 1996 macro `Absolute(a)` is
 `(a >= 0.0 ? a : -a)`. It equals `fabs(a)` except that `Absolute(-0.0)` is
