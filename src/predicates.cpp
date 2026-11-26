@@ -382,16 +382,18 @@ double estimate(int elen, const double *e)
 //
 // The second half is lines 1601-1616 of predicates.c: the exact stage (D) of
 // orient2dadapt(), verbatim, in a function of its own so that the stages
-// before it do not pay for a function call's saved registers. B is stage B's
-// expansion; the other arguments are orient2dadapt()'s variables of the same
-// names.
+// before it do not pay for a function call's saved registers. B0 to B3 are
+// the components of stage B's expansion, passed by value so that the array
+// stays in registers in orient2dadapt(); the other arguments are
+// orient2dadapt()'s variables of the same names.
 SHEWCHUK_NOINLINE
 double orient2d_exact_stages(const double *pa, const double *pb, const double *pc,
-                             const double *B,
                              double acx, double acy, double bcx, double bcy,
                              double acxtail, double acytail,
-                             double bcxtail, double bcytail)
+                             double bcxtail, double bcytail,
+                             double B0, double B1, double B2, double B3)
 {
+  const double B[4] = {B0, B1, B2, B3};
   double C1[8], C2[12], D[16];
   int C1length, C2length, Dlength;
   double u[4];
@@ -500,8 +502,9 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
     return det;
   }
 
-  return orient2d_exact_stages(pa, pb, pc, B, acx, acy, bcx, bcy,
-                               acxtail, acytail, bcxtail, bcytail);
+  return orient2d_exact_stages(pa, pb, pc, acx, acy, bcx, bcy,
+                               acxtail, acytail, bcxtail, bcytail,
+                               B[0], B[1], B[2], B[3]);
 }
 
 }  // namespace
