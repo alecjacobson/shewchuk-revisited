@@ -292,8 +292,8 @@ change is noticed; not a contract):
 
 | Input | What the library returns today |
 |---|---|
-| too large (an intermediate product overflows) | NaN; orient2d can also return an infinity, which had the exact sign on the sample. Every result that was still finite had the exact sign |
-| too small (a roundoff term underflows) | a finite value whose sign can be wrong, with nothing to signal it: zero for a nonzero determinant, or nonzero for a zero determinant. An opposite nonzero sign was not observed |
+| too large (an intermediate product overflows) | NaN, or an infinity. An infinity can have the wrong sign (seen for incircle and insphere in an independent review sample; the orient2d infinities on the test's sample had the exact sign). Every result that was still finite had the exact sign on the test's sample |
+| too small (a roundoff term underflows) | a finite value whose sign can be wrong, with nothing to signal it: zero for a nonzero determinant, or nonzero for a zero determinant. An opposite nonzero sign is possible too: it was not observed on the test's sample, but an independent review sample found it (about 800 of 3 million out-of-domain cases), when the first filter certifies a determinant computed from underflowed products |
 | a NaN coordinate | NaN |
 | an infinite coordinate | NaN; orient2d can also return an infinity |
 
