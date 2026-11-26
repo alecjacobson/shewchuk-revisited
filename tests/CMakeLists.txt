@@ -113,7 +113,8 @@ endif()
 
 # --- Test executables
 foreach(name test_oracle test_oracle_gmp test_stage_coverage differential
-    test_constants test_expansions test_threads test_orient2d_first_test)
+    test_constants test_expansions test_threads test_orient2d_first_test
+    test_input_domain)
   add_executable(${name} ${name}.cpp)
   target_link_libraries(${name} PRIVATE shewchuk_test_support)
   if(MSVC)
@@ -261,6 +262,7 @@ shewchuk_add_test(library.api_c test_api_c)
 shewchuk_add_test(library.threads test_threads)
 shewchuk_add_test(library.stages test_stage_coverage quick library)
 shewchuk_add_test(library.orient2d_first_test test_orient2d_first_test)
+shewchuk_add_test(library.input_domain test_input_domain)
 # The library is declared refactor-only: every value must equal the
 # reference's, and the value hash must equal the recorded one.
 shewchuk_add_test(differential.library
