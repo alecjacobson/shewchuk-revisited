@@ -64,7 +64,7 @@ stage runs.
 
 | Stage | Claim | Bound |
 |---|---|---|
-| A0 | Exact sign without a bound: the two products have opposite signs or one is zero, so their difference cannot cancel. Relies on assumptions 3 and 4 (a rounded difference or product is zero only if the exact one is). | none |
+| A0 | Exact sign without a bound: the two products have opposite signs or one is zero, so their difference cannot cancel. Relies on assumptions 3 and 4 (a rounded difference or product is zero only if the exact one is). In the library A0 and A are one comparison, see [orient2d: the merged first test](#orient2d-the-merged-first-test). | none |
 | A | Certified. `det` is the determinant in plain double arithmetic. | `ccwerrboundA * detsum`, (3ε + 16ε²)(\|detleft\| + \|detright\|) |
 | B | Certified. `B` is the exact determinant of the rounded differences; `det = estimate(B)`. | `ccwerrboundB * detsum`, (2ε + 12ε²) |
 | Bx | Exact. All four difference tails are zero, so the differences were exact and `B` is the exact determinant. | none |
@@ -93,9 +93,10 @@ in `predicates.c`.
 
 ## The first filters
 
-The first filter (stage A) of orient3d, incircle and insphere is written
-differently from the 1996 code. Each rewrite below returns the same double as
-the original for every input, so the claims above are unchanged. The proof obligation is the
+The first filter (stage A) of every predicate is written differently from the
+1996 code. Each rewrite below returns the same double as the original, for
+every input in the first two cases and for every input that does not make a
+product NaN in the third, so the claims above are unchanged. The proof obligation is the
 argument here plus the recorded value hash, which must still match
 (`differential.library`).
 
@@ -107,7 +108,8 @@ zero, and the sign of a zero does not affect a comparison). If `det` or `e` is
 NaN every one of the comparisons is false. So the two tests are the same
 predicate on all doubles, for every `e`. The same holds with `>=` in place of
 `>`. The first filters of orient3d, incircle and insphere use `>`, as in 1996.
-The later stages, which use `>=`, and orient2d are written as in 1996.
+orient2d's merged first test (below) uses `>=`, as its filter does in 1996.
+The later stages, which also use `>=`, are written as in 1996.
 
 **`fabs` in the permanent.** The 1996 macro `Absolute(a)` is
 `(a >= 0.0 ? a : -a)`. It equals `fabs(a)` except that `Absolute(-0.0)` is
@@ -119,6 +121,73 @@ c * permanent` here, and `c * permanent + resulterrbound * |det|` after it is
 passed to the `*adapt` function), and an error bound is used only as the
 right-hand side of comparisons, which the sign of a zero and the bits of a NaN
 do not affect. No returned value is computed from `permanent`.
+
+### orient2d: the merged first test
+
+With `detleft` and `detright` the two rounded products and
+`det = detleft - detright`, the 1996 code is
+
+```c
+if (detleft > 0.0) {
+  if (detright <= 0.0) return det;            /* A0 */
+  else detsum = detleft + detright;
+} else if (detleft < 0.0) {
+  if (detright >= 0.0) return det;            /* A0 */
+  else detsum = -detleft - detright;
+} else {
+  return det;                                 /* A0 */
+}
+errbound = ccwerrboundA * detsum;
+if ((det >= errbound) || (-det >= errbound)) return det;   /* A */
+return orient2dadapt(pa, pb, pc, detsum);
+```
+
+and the library is
+
+```c
+detsum = fabs(detleft) + fabs(detright);
+errbound = ccwerrboundA * detsum;
+if (fabs(det) >= errbound) return det;
+return orient2dadapt(pa, pb, pc, detsum);
+```
+
+Both return either `det`, computed identically, or the value of
+`orient2dadapt(pa, pb, pc, detsum)`. So it suffices to show that they choose
+the same of the two, and pass the same `detsum`. Let neither product be NaN.
+
+1. *Both products positive, or both negative.* The 1996 code reaches the
+   filter with `detsum = detleft + detright` or `(-detleft) - detright`. Both
+   are the correctly rounded sum of the magnitudes: negation is exact, and
+   round-to-nearest is symmetric, so `(-a) - b`, which is `(-a) + (-b)`,
+   equals `fabs(a) + fabs(b)` bit for bit when `a` and `b` are negative. So
+   `detsum` and `errbound` are the same doubles in both versions, the two
+   tests are the same predicate (previous section, with `>=`), and the same
+   `detsum` goes to `orient2dadapt`.
+2. *Every other case: the products have opposite signs, or at least one is a
+   zero (of either sign).* The 1996 code returns `det`. In the library, the
+   real number `detleft - detright` has magnitude exactly
+   `|detleft| + |detright|`, because the two terms do not cancel. `det` is
+   that difference rounded and `detsum` is that sum rounded, and rounding is
+   symmetric, so `fabs(det) == detsum`, including when both overflow to
+   infinity and when both are zero. `errbound` is `detsum` times a constant
+   less than one, rounded; rounding is monotonic and `detsum` is a double, so
+   `errbound <= detsum` (and infinity `>=` infinity holds). The test
+   `fabs(det) >= errbound` therefore passes and the library returns `det`
+   too. This is why the operator must stay `>=`: with two zero products
+   `fabs(det)` and `errbound` are both zero.
+
+The argument uses only that each `+`, `-`, `*` is correctly rounded to
+nearest; it holds for subnormal and overflowing products as well, outside the
+domain of assumption 3. The two products must stay separately rounded doubles.
+
+If `detleft` is NaN (which needs a NaN or infinite intermediate, excluded by
+assumptions 3 and 5) the 1996 code returns `det`, a NaN, at once, and the
+library calls `orient2dadapt`; on the cases tried that returns NaN as well. If
+only `detright` is NaN both versions call `orient2dadapt`.
+
+Tests: `library.stages` requires, for every corpus case the reference decides
+in A0, that the library's single test decides it; `library.orient2d_first_test`
+compares values and stages on special products.
 
 ## What is and is not established
 

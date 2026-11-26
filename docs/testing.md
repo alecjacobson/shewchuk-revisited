@@ -47,7 +47,8 @@ Tests of the library (`src/predicates.cpp`):
 |---|---|
 | `differential.library` | zero sign mismatches against the oracle; every value equals the reference's bit for bit; the value hash equals the recorded reference hash |
 | `differential.library_hooked` | the same for the library's test-only build |
-| `library.stages` | every stage of the library decides at least 2% of its cases, and every single case is decided by the same stage as in the reference |
+| `library.stages` | every stage of the library decides at least 2% of its cases, and every single case is decided by the same stage as in the reference. For orient2d the library has one test where the reference has two (A0 and A); a call that test decides is counted as A0 if its two products have opposite signs or one is zero, the class the reference decides in A0, and as A otherwise. A reference-A0 case that the library handed to `orient2dadapt()` would be reported as B, Bx, C or D and fail |
+| `library.orient2d_first_test` | the library's merged first test of orient2d returns the reference's value, in the reference's stage, on 234256 combinations of special products the corpus does not contain: zeros of both signs, equal and opposite products, subnormal, huge, overflowed to infinity |
 | `library.expansions` | `fast_expansion_sum_zeroelim`, `scale_expansion_zeroelim` and `estimate` return the same components as the reference's routines on random and adversarial expansions, up to the largest lengths any predicate uses |
 | `library.constants` | the compile-time constants equal the globals `exactinit()` computes, their formulas and their documented bit patterns |
 | `library.api`, `library.api_c` | the public headers from C++ and C, including the opt-in 1996 names |
