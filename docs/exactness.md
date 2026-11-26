@@ -342,9 +342,36 @@ exactly -floor(1074 / d), and wrong on most of the slice beyond. These are
 observations on a sample, not theorems. The library built without guard and
 integer stage behaves the same.
 
-A caller that maps the result to a sign with `(x > 0) - (x < 0)` still turns
-a NaN into 0, "degenerate": a coordinate that is not finite must be caught by
-the caller, or by a sign-returning interface (issue #28).
+## The two return-value contracts
+
+Each predicate has two entry points (`include/shewchuk/predicates.h`).
+
+| Function | Finite coordinates | A NaN or infinite coordinate |
+|---|---|---|
+| `shewchuk_<name>_sign()` | `+1`, `0` or `-1`: the exact sign | `SHEWCHUK_SIGN_NOT_FINITE` (2) |
+| `shewchuk_<name>()` | a finite double with the exact sign; its magnitude means nothing (an estimate of the determinant, or -1.0, 0.0, +1.0, depending on the stage that decides) | NaN |
+
+The sign-returning function is the one to use: an input without a
+determinant can never be mistaken for a degenerate one. With the
+double-returning function, which is kept because it is the interface of the
+1996 code, a caller that maps the result to a sign with `(x > 0) - (x < 0)`,
+or that tests only `x > 0` and `x < 0`, turns a NaN into "zero".
+
+`SHEWCHUK_SIGN_NOT_FINITE` is 2: not a sign, and neither is its negation
+(code that flips an orientation by negating the result still does not get a
+sign). It is not an error code to be ignored: every value other than -1, 0
+and +1 means that there was no determinant to take the sign of.
+
+The sign-returning functions are the double-returning ones followed by
+`value > 0 ? 1 : value < 0 ? -1 : value == 0 ? 0 : SHEWCHUK_SIGN_NOT_FINITE`,
+inside the library's translation unit (a caller compiled with
+`-ffinite-math-only` could not make the last comparison). That this is the
+contract above follows from [proofs/input-domain.md](proofs/input-domain.md),
+Theorem 4: the double-returning function returns a finite value with the
+exact sign for finite coordinates and a NaN otherwise, so the three
+comparisons give the exact sign in the first case and all fail in the
+second. Tested by `library.api`, `library.api_c` and, on every case and
+every non-finite call of the input-domain test, by `library.input_domain`.
 
 ## What is and is not established
 

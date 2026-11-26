@@ -4,6 +4,8 @@
 #include "shewchuk/predicates_1996.h"
 
 #include <cstdio>
+#include <initializer_list>
+#include <limits>
 
 #include "check.h"
 
@@ -39,6 +41,43 @@ int main() {
   CHECK(shewchuk::orient3d(p, q, r, s) == shewchuk_orient3d(p, q, r, s));
   CHECK(shewchuk::incircle(a, b, c, d) == shewchuk_incircle(a, b, c, d));
   CHECK(shewchuk::insphere(p, q, r, s, t) == shewchuk_insphere(p, q, r, s, t));
+
+  // The sign-returning form: +1, 0, -1 ...
+  CHECK(shewchuk_orient2d_sign(a, b, c) == 1);
+  CHECK(shewchuk_orient2d_sign(a, c, b) == -1);
+  CHECK(shewchuk_orient2d_sign(u, v, w) == 0);
+  CHECK(shewchuk_orient3d_sign(p, q, r, s) == 1);
+  CHECK(shewchuk_orient3d_sign(p, r, q, s) == -1);
+  CHECK(shewchuk_orient3d_sign(p, q, r, p) == 0);
+  CHECK(shewchuk_incircle_sign(a, b, c, d) == 1);
+  CHECK(shewchuk_incircle_sign(a, c, b, d) == -1);
+  CHECK(shewchuk_incircle_sign(a, b, c, a) == 0);
+  CHECK(shewchuk_insphere_sign(p, q, r, s, t) == 1);
+  CHECK(shewchuk_insphere_sign(p, r, q, s, t) == -1);
+  CHECK(shewchuk_insphere_sign(p, q, r, s, p) == 0);
+  CHECK(shewchuk::orient2d_sign(a, b, c) == 1 && shewchuk::orient3d_sign(p, q, r, s) == 1 &&
+        shewchuk::incircle_sign(a, b, c, d) == 1 && shewchuk::insphere_sign(p, q, r, s, t) == 1);
+  // ... and for a coordinate that is not finite a value that is no sign, and
+  // whose negation is none either. Never 0.
+  static_assert(SHEWCHUK_SIGN_NOT_FINITE != 0 && SHEWCHUK_SIGN_NOT_FINITE != 1 &&
+                SHEWCHUK_SIGN_NOT_FINITE != -1 && -SHEWCHUK_SIGN_NOT_FINITE != 1 &&
+                -SHEWCHUK_SIGN_NOT_FINITE != -1 && -SHEWCHUK_SIGN_NOT_FINITE != 0);
+  static_assert(shewchuk::sign_not_finite == SHEWCHUK_SIGN_NOT_FINITE);
+  for (const double bad : {std::numeric_limits<double>::quiet_NaN(),
+                           std::numeric_limits<double>::infinity(),
+                           -std::numeric_limits<double>::infinity()}) {
+    const double x[2] = {bad, 0.0}, y[3] = {0.0, bad, 0.0};
+    CHECK(shewchuk_orient2d_sign(x, b, c) == SHEWCHUK_SIGN_NOT_FINITE);
+    CHECK(shewchuk_orient2d_sign(a, a, x) == SHEWCHUK_SIGN_NOT_FINITE);
+    CHECK(shewchuk_orient3d_sign(p, y, r, s) == SHEWCHUK_SIGN_NOT_FINITE);
+    CHECK(shewchuk_incircle_sign(a, b, x, d) == SHEWCHUK_SIGN_NOT_FINITE);
+    CHECK(shewchuk_insphere_sign(p, q, r, s, y) == SHEWCHUK_SIGN_NOT_FINITE);
+    // The double-returning form gives a NaN there, which a sign test that
+    // only asks "> 0" and "< 0" reads as zero.
+    const double value = shewchuk_orient2d(x, b, c);
+    CHECK(value != value);
+    CHECK(sign(value) == 0);
+  }
 
   // The 1996 names, called the 1996 way: exactinit() first (a no-op here),
   // non-const points.

@@ -74,6 +74,8 @@
 #include <limits>
 #include <vector>
 
+#include "shewchuk/predicates.h"
+
 #include "check.h"
 #include "generators.h"
 #include "implementations.h"
@@ -172,6 +174,7 @@ struct Totals {
   long guard_rejections[NUM_PREDS] = {};
   long guard_rejections_rechecked[NUM_PREDS] = {};
   long route_violations = 0, hook_value_differences = 0;
+  long sign_form_differences = 0;
   // The 1996 code inside and beyond REFERENCE_LIMITS, in the two sweeps.
   Tally reference_inside[NUM_PREDS], reference_beyond[NUM_PREDS];
   // Exception flags at the edge of the floating-point domain.
@@ -184,6 +187,16 @@ struct Subjects {
   const Implementation* reference;
   const Implementation* unguarded;
 };
+
+// The sign-returning form of the shipped library's predicates.
+int library_sign(Pred pred, const double* c) {
+  switch (pred) {
+    case ORIENT2D: return shewchuk_orient2d_sign(c, c + 2, c + 4);
+    case ORIENT3D: return shewchuk_orient3d_sign(c, c + 3, c + 6, c + 9);
+    case INCIRCLE: return shewchuk_incircle_sign(c, c + 2, c + 4, c + 6);
+    default: return shewchuk_insphere_sign(c, c + 3, c + 6, c + 9, c + 12);
+  }
+}
 
 void print_case(Pred pred, const double* c) {
   std::printf("    %s", PRED_NAME[pred]);
@@ -215,6 +228,8 @@ void run_case(const Subjects& subjects, Totals& totals, Family family, Pred pred
                 exact);
     print_case(pred, c);
   }
+  // The sign-returning form: the exact sign, as an int.
+  if (library_sign(pred, c) != exact) totals.sign_form_differences++;
   const double reference_value = subjects.reference->call(pred, c);
   count(totals.reference[pred][family], reference_value, exact);
   if (reference_tally) count(*reference_tally, reference_value, exact);
@@ -552,7 +567,7 @@ void reproducer(const Subjects& subjects) {
 void non_finite(const Subjects& subjects, const std::vector<Case>& cases) {
   const double nan = std::numeric_limits<double>::quiet_NaN();
   const double infinity = std::numeric_limits<double>::infinity();
-  long calls[NUM_PREDS] = {}, not_nan = 0, wrong_path = 0;
+  long calls[NUM_PREDS] = {}, not_nan = 0, wrong_path = 0, not_flagged = 0;
   auto check = [&](Pred pred, const double* c) {
     calls[pred]++;
     if (!std::isnan(subjects.library->call(pred, c))) {
@@ -565,6 +580,8 @@ void non_finite(const Subjects& subjects, const std::vector<Case>& cases) {
     shewchuk_hooked_last_path = -1;
     if (!std::isnan(staged_library_call(pred, c, &stage))) not_nan++;
     if (shewchuk_hooked_last_path != SHEWCHUK_PATH_NOT_FINITE) wrong_path++;
+    // The sign-returning form: never a sign, in particular never 0.
+    if (library_sign(pred, c) != SHEWCHUK_SIGN_NOT_FINITE) not_flagged++;
   };
   Rng r(0x1f);
   for (const Case& one : cases) {
@@ -602,6 +619,12 @@ void non_finite(const Subjects& subjects, const std::vector<Case>& cases) {
   if (not_nan) std::printf("%ld calls with a non-finite coordinate did not return NaN\n", not_nan);
   CHECK(not_nan == 0);
   CHECK(wrong_path == 0);
+  if (not_flagged) {
+    std::printf("%ld calls with a non-finite coordinate: the sign-returning form did not return "
+                "SHEWCHUK_SIGN_NOT_FINITE\n",
+                not_flagged);
+  }
+  CHECK(not_flagged == 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -801,6 +824,11 @@ int main(int argc, char** argv) {
                 totals.hook_value_differences);
   }
   CHECK(totals.hook_value_differences == 0);
+  if (totals.sign_form_differences) {
+    std::printf("%ld results of the sign-returning form are not the exact sign\n",
+                totals.sign_form_differences);
+  }
+  CHECK(totals.sign_form_differences == 0);
 
   flags_at_the_edge(totals, cases);
   std::printf("\ncalls at the edge of the floating-point domain decided by a floating-point "

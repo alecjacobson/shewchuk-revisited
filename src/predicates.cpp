@@ -102,6 +102,21 @@
 #define shewchuk_orient3d shewchuk_hooked_orient3d
 #define shewchuk_incircle shewchuk_hooked_incircle
 #define shewchuk_insphere shewchuk_hooked_insphere
+#define shewchuk_orient2d_sign shewchuk_hooked_orient2d_sign
+#define shewchuk_orient3d_sign shewchuk_hooked_orient3d_sign
+#define shewchuk_incircle_sign shewchuk_hooked_incircle_sign
+#define shewchuk_insphere_sign shewchuk_hooked_insphere_sign
+// The test-only build does not include the public header.
+#define SHEWCHUK_SIGN_NOT_FINITE 2
+extern "C" {
+int shewchuk_hooked_orient2d_sign(const double *pa, const double *pb, const double *pc);
+int shewchuk_hooked_orient3d_sign(const double *pa, const double *pb, const double *pc,
+                                  const double *pd);
+int shewchuk_hooked_incircle_sign(const double *pa, const double *pb, const double *pc,
+                                  const double *pd);
+int shewchuk_hooked_insphere_sign(const double *pa, const double *pb, const double *pc,
+                                  const double *pd, const double *pe);
+}
 int shewchuk_hooked_last_stage = -1;
 int shewchuk_hooked_last_path = -1;
 int shewchuk_hooked_last_integer_tier = -1;
@@ -2654,6 +2669,53 @@ double shewchuk_insphere(const double *pa, const double *pb, const double *pc,
 
   return insphere_after_filter(pa, pb, pc, pd, pe, permanent);
 }
+
+// ---------------------------------------------------------------------------
+// The sign-returning interface. Not from 1996.
+//
+// The sign of the value the predicate returns, which is the exact sign for
+// every finite input (docs/proofs/input-domain.md). A predicate returns a NaN
+// exactly if a coordinate is not finite; a NaN compares false with
+// everything, also with itself, and becomes SHEWCHUK_SIGN_NOT_FINITE here,
+// never 0. These comparisons are in this translation unit on purpose: a
+// caller compiled with -ffinite-math-only could not make them.
+// ---------------------------------------------------------------------------
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+namespace {
+
+inline int sign_of_result(double value) noexcept
+{
+  if (value > 0.0) return 1;
+  if (value < 0.0) return -1;
+  if (value == 0.0) return 0;
+  return SHEWCHUK_SIGN_NOT_FINITE;
+}
+
+}  // namespace
+
+int shewchuk_orient2d_sign(const double *pa, const double *pb, const double *pc)
+{
+  return sign_of_result(shewchuk_orient2d(pa, pb, pc));
+}
+
+int shewchuk_orient3d_sign(const double *pa, const double *pb, const double *pc,
+                           const double *pd)
+{
+  return sign_of_result(shewchuk_orient3d(pa, pb, pc, pd));
+}
+
+int shewchuk_incircle_sign(const double *pa, const double *pb, const double *pc,
+                           const double *pd)
+{
+  return sign_of_result(shewchuk_incircle(pa, pb, pc, pd));
+}
+
+int shewchuk_insphere_sign(const double *pa, const double *pb, const double *pc,
+                           const double *pd, const double *pe)
+{
+  return sign_of_result(shewchuk_insphere(pa, pb, pc, pd, pe));
+}
+#endif
 
 #ifdef SHEWCHUK_PREDICATES_TEST_HOOKS
 // Test-only exports of the internal expansion routines (test_hooks.h).

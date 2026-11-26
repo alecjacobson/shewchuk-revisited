@@ -58,7 +58,9 @@ function(shewchuk_add_library_variant target prefix)
   add_library(${target} STATIC "${PROJECT_SOURCE_DIR}/src/predicates.cpp")
   target_compile_definitions(${target} PRIVATE ${ARGN}
     shewchuk_orient2d=${prefix}orient2d shewchuk_orient3d=${prefix}orient3d
-    shewchuk_incircle=${prefix}incircle shewchuk_insphere=${prefix}insphere)
+    shewchuk_incircle=${prefix}incircle shewchuk_insphere=${prefix}insphere
+    shewchuk_orient2d_sign=${prefix}orient2d_sign shewchuk_orient3d_sign=${prefix}orient3d_sign
+    shewchuk_incircle_sign=${prefix}incircle_sign shewchuk_insphere_sign=${prefix}insphere_sign)
   target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/include")
   target_link_libraries(${target} PRIVATE shewchuk_strict_fp shewchuk_sanitize)
 endfunction()
@@ -224,7 +226,8 @@ if(lto_supported)
     foreach(target ${library} ${caller})
       foreach(predicate orient2d orient3d incircle insphere)
         target_compile_definitions(${target} PRIVATE
-          shewchuk_${predicate}=shewchuk_lto_${tag}_${predicate})
+          shewchuk_${predicate}=shewchuk_lto_${tag}_${predicate}
+          shewchuk_${predicate}_sign=shewchuk_lto_${tag}_${predicate}_sign)
       endforeach()
       target_include_directories(${target} PRIVATE
         "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/src")
@@ -367,12 +370,13 @@ endif()
 shewchuk_add_test(library.lto_fast_math_caller test_lto_caller exact)
 shewchuk_add_test(negative_control.lto_fast_math_caller test_lto_caller contracted)
 
-# The shipped library exports the four predicates and nothing else. (Skipped
+# The shipped library exports the four predicates, each in its two forms, and
+# nothing else. (Skipped
 # in sanitizer builds, whose runtime adds symbols of its own.)
 if(CMAKE_NM AND NOT MSVC AND NOT SHEWCHUK_SANITIZE)
   shewchuk_add_test(library.symbols
     "${CMAKE_COMMAND}" "-DNM=${CMAKE_NM}" "-DLIBRARY=$<TARGET_FILE:shewchuk_predicates>"
-    -DPREFIX=shewchuk_ -DEXPECTED_COUNT=4 -P "${PROJECT_SOURCE_DIR}/cmake/CheckSymbolPrefix.cmake")
+    -DPREFIX=shewchuk_ -DEXPECTED_COUNT=8 -P "${PROJECT_SOURCE_DIR}/cmake/CheckSymbolPrefix.cmake")
 endif()
 
 # No fused multiply-add in the library's object code (cmake/CheckNoFma.cmake).

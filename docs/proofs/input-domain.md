@@ -558,7 +558,8 @@ unchanged.
 ## 9. What is not claimed
 
 - Nothing about inputs with a coordinate that is not finite beyond "the
-  result is a NaN".
+  result is a NaN" (and, for the sign-returning functions,
+  `SHEWCHUK_SIGN_NOT_FINITE`: ledger, "The two return-value contracts").
 - Nothing about the magnitude of a result. Outside the floating-point domain
   the integer stage decides more calls than before, and those return -1, 0
   or +1.

@@ -58,9 +58,9 @@ Tests of the library (`src/predicates.cpp`):
 | `library.input_domain` | **the exact sign for every finite input.** See below |
 | `library.expansions` | `fast_expansion_sum_zeroelim`, `scale_expansion_zeroelim` and `estimate` return the same components as the reference's routines on random and adversarial expansions, up to the largest lengths any predicate uses |
 | `library.constants` | the compile-time constants equal the globals `exactinit()` computes, their formulas and their documented bit patterns |
-| `library.api`, `library.api_c` | the public headers from C++ and C, including the opt-in 1996 names |
+| `library.api`, `library.api_c` | the public headers from C++ and C, including the opt-in 1996 names; both forms of every predicate (the double with the exact sign, and the sign as -1, 0, +1), and `SHEWCHUK_SIGN_NOT_FINITE` for a NaN or infinite coordinate |
 | `library.threads` | several threads calling the predicates get the single-threaded values |
-| `library.symbols` | the library exports the four `shewchuk_` predicates and nothing else |
+| `library.symbols` | the library exports the four `shewchuk_` predicates, each in its two forms, and nothing else (8 symbols) |
 | `library.lto_fast_math_caller` | a caller compiled with `-O3 -ffast-math` (MSVC: `/fp:fast`) and link-time optimization, linked with those flags against a link-time-optimized build of the library that has the same flags in front of the project's strict ones, gets the recorded values bit for bit on the whole corpus (skipped if the toolchain has no link-time optimization, or on an x86-64 CPU without FMA: the test compiles with `-mfma`) |
 | `negative_control.lto_fast_math_caller` | the same test IS failed by a library copy built with `-ffp-contract=fast` instead of the strict flags. The criterion is the value hash: with clang this copy returns different values but no wrong sign on the corpus, with GCC it returns wrong signs |
 | `library.no_fma` | the library's object code contains no fused multiply-add and no call to `fma()` (skipped if no disassembler is found or the architecture is not arm64 / x86-64) |
@@ -130,7 +130,10 @@ What it requires:
   callers must not rely on the flags;
 - **non-finite input**: NaN for a NaN or an infinity at every coordinate
   position, alone and in combinations, at the case's own scale and at both
-  ends of the format.
+  ends of the format; and `SHEWCHUK_SIGN_NOT_FINITE` from the sign-returning
+  form;
+- **the sign-returning form** returns the oracle's sign on every finite case
+  of every family.
 
 What these tests cannot do is validate the guard's thresholds; see the
 mutation table in [proofs/input-domain.md](proofs/input-domain.md).
