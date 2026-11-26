@@ -250,8 +250,8 @@ rounds; a ratio below 1 means the comparator is faster):
 | Apple clang 21 | `insphere` | `uniform` | Indirect_Predicates | 28.7 | 30.7 | 1.07x | 0.937 [0.935, 0.938], faster |
 | Apple clang 21 | `incircle` | `wide_exponents` | CGAL EPICK | 333 | 1,625 | 4.87x | 0.206 [0.205, 0.207], faster |
 | Apple clang 21 | `orient2d` | `degenerate_lattice` | GeometricPredicates | 22.9 | 27.7 | 1.21x | 0.827 [0.825, 0.829], faster |
-| Apple clang 21 | `orient2d` | `degenerate_53bit` | GeometricPredicates | 55.4 | 57.1 | 1.03x | 0.960 [0.956, 0.967], faster |
-| Apple clang 21 | `orient2d` | `stage_B` | GeometricPredicates | 17.1 | 21.8 | 1.27x | 0.788 [0.787, 0.788], faster |
+| Apple clang 21 | `orient2d` | `degenerate_53bit` | GeometricPredicates | 55.3 | 57.1 | 1.03x | 0.960 [0.956, 0.967], faster |
+| Apple clang 21 | `orient2d` | `stage_B` | GeometricPredicates | 17.2 | 21.8 | 1.27x | 0.788 [0.787, 0.788], faster |
 | Apple clang 21 | `incircle` | `uniform` | GeometricPredicates | 11.5 | 11.8 | 1.02x | 0.975 [0.974, 0.977], faster |
 | Apple clang 21 | `incircle` | `wide_exponents` | GeometricPredicates | 722 | 1,625 | 2.25x | 0.448 [0.447, 0.449], faster |
 | GCC 16 | `orient2d` | `wide_exponents` | Indirect_Predicates | 6.9 | 10.5 | 1.53x | 0.655 [0.654, 0.655], faster |
@@ -262,10 +262,10 @@ rounds; a ratio below 1 means the comparator is faster):
 | GCC 16 | `orient3d` | `wide_exponents` | Indirect_Predicates | 88.4 | 108 | 1.23x | 0.818 [0.813, 0.823], faster |
 | GCC 16 | `incircle` | `wide_exponents` | CGAL EPICK | 290 | 1,621 | 5.59x | 0.179 [0.179, 0.180], faster |
 | GCC 16 | `orient2d` | `degenerate_lattice` | GeometricPredicates | 23.2 | 29.8 | 1.28x | 0.780 [0.779, 0.780], faster |
-| GCC 16 | `orient2d` | `degenerate_53bit` | GeometricPredicates | 52.9 | 62.3 | 1.18x | 0.847 [0.834, 0.849], faster |
+| GCC 16 | `orient2d` | `degenerate_53bit` | GeometricPredicates | 52.6 | 62.3 | 1.18x | 0.847 [0.834, 0.849], faster |
 | GCC 16 | `orient2d` | `stage_B` | GeometricPredicates | 15.3 | 22.1 | 1.44x | 0.691 [0.691, 0.693], faster |
-| GCC 16 | `orient3d` | `wide_exponents` | GeometricPredicates† | 103 | 108 | 1.05x | not measured |
-| GCC 16 | `orient3d` | `degenerate_lattice` | GeometricPredicates | 93.2 | 101 | 1.09x | not measured |
+| GCC 16 | `orient3d` | `wide_exponents` | GeometricPredicates† | 102 | 108 | 1.06x | not measured |
+| GCC 16 | `orient3d` | `degenerate_lattice` | GeometricPredicates | 92.9 | 101 | 1.09x | not measured |
 | GCC 16 | `incircle` | `wide_exponents` | GeometricPredicates | 652 | 1,621 | 2.48x | 0.402 [0.401, 0.403], faster |
 
 What the comparators do differently there, as far as their code was read
