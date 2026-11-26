@@ -1,12 +1,13 @@
 // The four adaptive predicates of Shewchuk's 1996 predicates.c (orient2d,
 // orient3d, incircle, insphere) and the expansion arithmetic they call.
 //
-// This file is a port, not a rewrite. Every function below performs the same
-// floating-point operations in the same order as the function of the same
-// name in reference/predicates.c, with the same stages and the same buffer
-// capacities, and returns bit-identical values (the test suite checks that on
-// the whole corpus). Each function is marked with the line range it was
-// ported from so that the two can be compared side by side. What changed:
+// This file is a port, not a rewrite. Except where the list below says
+// otherwise, every function performs the same floating-point operations in
+// the same order as the function of the same name in reference/predicates.c,
+// with the same stages and the same buffer capacities. Every function returns
+// bit-identical values (the test suite checks that on the whole corpus). Each
+// function is marked with the line range it was ported from so that the two
+// can be compared side by side. What changed:
 //
 //   * ANSI prototypes, const input pointers, `double` instead of the
 //     REAL / INEXACT macros;
@@ -17,6 +18,11 @@
 //     of its inputs (see the comment there);
 //   * six array lengths in incircleadapt() are zero-initialized to silence a
 //     false compiler warning;
+//   * the first filters of orient3d, incircle and insphere (in the
+//     shewchuk_* functions) take absolute values with fabs and compare
+//     fabs(det) with the error bound once, instead of the Absolute() macro
+//     and two comparisons; docs/exactness.md ("The first filters") shows that
+//     no returned value can change;
 //   * SHEWCHUK_STAGE_HIT() marks which stage decides a call. It expands to
 //     nothing except in the test-only build (test_hooks.h);
 //   * orient2dadapt(), orient3dadapt() and incircleadapt() are never inlined
@@ -45,6 +51,8 @@
 #if defined(FLT_EVAL_METHOD) && FLT_EVAL_METHOD != 0
 #error "the predicates need double arithmetic without extended precision"
 #endif
+
+#include <cmath>
 
 #include "constants.h"
 
@@ -924,11 +932,11 @@ double shewchuk_orient3d(const double *pa, const double *pb, const double *pc,
       + bdz * (cdxady - adxcdy)
       + cdz * (adxbdy - bdxady);
 
-  permanent = (Absolute(bdxcdy) + Absolute(cdxbdy)) * Absolute(adz)
-            + (Absolute(cdxady) + Absolute(adxcdy)) * Absolute(bdz)
-            + (Absolute(adxbdy) + Absolute(bdxady)) * Absolute(cdz);
+  permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * std::fabs(adz)
+            + (std::fabs(cdxady) + std::fabs(adxcdy)) * std::fabs(bdz)
+            + (std::fabs(adxbdy) + std::fabs(bdxady)) * std::fabs(cdz);
   errbound = o3derrboundA * permanent;
-  if ((det > errbound) || (-det > errbound)) {
+  if (std::fabs(det) > errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
     return det;
   }
@@ -1554,11 +1562,11 @@ double shewchuk_incircle(const double *pa, const double *pb, const double *pc,
       + blift * (cdxady - adxcdy)
       + clift * (adxbdy - bdxady);
 
-  permanent = (Absolute(bdxcdy) + Absolute(cdxbdy)) * alift
-            + (Absolute(cdxady) + Absolute(adxcdy)) * blift
-            + (Absolute(adxbdy) + Absolute(bdxady)) * clift;
+  permanent = (std::fabs(bdxcdy) + std::fabs(cdxbdy)) * alift
+            + (std::fabs(cdxady) + std::fabs(adxcdy)) * blift
+            + (std::fabs(adxbdy) + std::fabs(bdxady)) * clift;
   errbound = iccerrboundA * permanent;
-  if ((det > errbound) || (-det > errbound)) {
+  if (std::fabs(det) > errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
     return det;
   }
@@ -2112,22 +2120,22 @@ double shewchuk_insphere(const double *pa, const double *pb, const double *pc,
 
   det = (dlift * abc - clift * dab) + (blift * cda - alift * bcd);
 
-  aezplus = Absolute(aez);
-  bezplus = Absolute(bez);
-  cezplus = Absolute(cez);
-  dezplus = Absolute(dez);
-  aexbeyplus = Absolute(aexbey);
-  bexaeyplus = Absolute(bexaey);
-  bexceyplus = Absolute(bexcey);
-  cexbeyplus = Absolute(cexbey);
-  cexdeyplus = Absolute(cexdey);
-  dexceyplus = Absolute(dexcey);
-  dexaeyplus = Absolute(dexaey);
-  aexdeyplus = Absolute(aexdey);
-  aexceyplus = Absolute(aexcey);
-  cexaeyplus = Absolute(cexaey);
-  bexdeyplus = Absolute(bexdey);
-  dexbeyplus = Absolute(dexbey);
+  aezplus = std::fabs(aez);
+  bezplus = std::fabs(bez);
+  cezplus = std::fabs(cez);
+  dezplus = std::fabs(dez);
+  aexbeyplus = std::fabs(aexbey);
+  bexaeyplus = std::fabs(bexaey);
+  bexceyplus = std::fabs(bexcey);
+  cexbeyplus = std::fabs(cexbey);
+  cexdeyplus = std::fabs(cexdey);
+  dexceyplus = std::fabs(dexcey);
+  dexaeyplus = std::fabs(dexaey);
+  aexdeyplus = std::fabs(aexdey);
+  aexceyplus = std::fabs(aexcey);
+  cexaeyplus = std::fabs(cexaey);
+  bexdeyplus = std::fabs(bexdey);
+  dexbeyplus = std::fabs(dexbey);
   permanent = ((cexdeyplus + dexceyplus) * bezplus
                + (dexbeyplus + bexdeyplus) * cezplus
                + (bexceyplus + cexbeyplus) * dezplus)
@@ -2145,7 +2153,7 @@ double shewchuk_insphere(const double *pa, const double *pb, const double *pc,
                + (aexbeyplus + bexaeyplus) * cezplus)
             * dlift;
   errbound = isperrboundA * permanent;
-  if ((det > errbound) || (-det > errbound)) {
+  if (std::fabs(det) > errbound) {
     SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_A);
     return det;
   }
