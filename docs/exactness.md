@@ -5,10 +5,11 @@ the argument is written down. The rule of the project: the sign of every
 result is exactly the sign of the determinant, and no change may weaken that.
 
 **Current state.** The library (`src/predicates.cpp`) is a port of the four
-adaptive predicates of the 1996 `predicates.c`. It performs the same
-floating-point operations in the same order and changes no arithmetic: on the
-whole test corpus every returned value is bit-identical to the pristine file's
-(see [testing.md](testing.md)). Every claim below is therefore the 1996
+adaptive predicates of the 1996 `predicates.c`. Apart from the rewrites listed
+under [The first filters](#the-first-filters), which cannot change a returned
+value, it performs the same floating-point operations in the same order: on
+the whole test corpus every returned value is bit-identical to the pristine
+file's (see [testing.md](testing.md)). Every claim below is therefore the 1996
 paper's claim, inherited unchanged. Nothing here has been re-derived yet.
 
 "The paper" is J. R. Shewchuk, *Adaptive Precision Floating-Point Arithmetic
@@ -89,6 +90,35 @@ values of the terms of the determinant, computed in double arithmetic.
 The paper describes these predicates in section 4.4. It does not print the
 derivations of their constants; they are the values computed by `exactinit()`
 in `predicates.c`.
+
+## The first filters
+
+The first filter (stage A) of orient3d, incircle and insphere is written
+differently from the 1996 code. Each rewrite below returns the same double as
+the original for every input, so the claims above are unchanged. The proof obligation is the
+argument here plus the recorded value hash, which must still match
+(`differential.library`).
+
+**One comparison.** The 1996 code tests `(det > errbound) || (-det > errbound)`;
+the library tests `fabs(det) > errbound`. For any `det` that is not NaN,
+`(det > e) || (-det > e)` says that the larger of `det` and `-det` exceeds
+`e`, and that larger value is `fabs(det)` (for a zero of either sign both are
+zero, and the sign of a zero does not affect a comparison). If `det` or `e` is
+NaN every one of the comparisons is false. So the two tests are the same
+predicate on all doubles, for every `e`. The same holds with `>=` in place of
+`>`. The first filters of orient3d, incircle and insphere use `>`, as in 1996.
+The later stages, which use `>=`, and orient2d are written as in 1996.
+
+**`fabs` in the permanent.** The 1996 macro `Absolute(a)` is
+`(a >= 0.0 ? a : -a)`. It equals `fabs(a)` except that `Absolute(-0.0)` is
+`-0.0` and that for a NaN the sign bit differs. The absolute values feed only
+`permanent`, a sum of products of them. Replacing a `-0.0` term by `+0.0` can
+change `permanent` only if `permanent` is a zero, and then only its sign; a
+NaN stays a NaN. `permanent` is used only to form error bounds (`errbound =
+c * permanent` here, and `c * permanent + resulterrbound * |det|` after it is
+passed to the `*adapt` function), and an error bound is used only as the
+right-hand side of comparisons, which the sign of a zero and the bits of a NaN
+do not affect. No returned value is computed from `permanent`.
 
 ## What is and is not established
 
