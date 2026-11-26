@@ -47,7 +47,9 @@
 //                                      __int128, builtins, intrinsics): force
 //                                      the portable 64x64->128 multiplication
 //                                      and bit counting, which compilers
-//                                      without those extensions get
+//                                      without those extensions get.
+//                                      predicates.cpp reads it too: no
+//                                      two-lane vector type either
 //   SHEWCHUK_INTEGER_STAGE_CHECKED     verify the proof's bounds at run time
 //                                      and count violations (test only)
 //   SHEWCHUK_INTEGER_STAGE_TEST_HOOKS  record the width and tier of each call

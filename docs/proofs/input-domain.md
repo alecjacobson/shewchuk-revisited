@@ -249,7 +249,8 @@ coordinate difference here, so the guard is a constant *window*:
     2^-600 <= errbound < 2^950.
 
 Inside the window the first test is trusted, and if it does not return,
-`orient2dadapt()` runs (stages B, Bx, C, then the integer stage or stage D).
+`orient2dadapt()` runs (stages B, Bx, C), and behind it
+`orient2d_after_stage_c()` (the integer stage, or stage D).
 The window test is one unsigned comparison of the bit pattern of `errbound`;
 a NaN or a negative zero has a pattern above the ceiling's.
 
@@ -329,9 +330,13 @@ floor exceeds the controls of the first test, `floor + 51 - 104` exceeds
 `src/predicates.cpp` check the facts about the constants (`ccwerrboundA <
 2^-51`, `ccwerrboundC > 2^-104`, every first-filter constant below 2^-48).
 
-After stage C, `orient2dadapt()` asks the integer stage, which decides the
+After stage C, `orient2d_after_stage_c()` asks the integer stage, which decides the
 call unless its coordinates are wider than 317 bits **and** inside the
-floating-point domain of section 5; only then does stage D run.
+floating-point domain of section 5; only then does stage D run
+(`orient2d_stage_d()`). Stage D starts from the expansion `B` and the
+difference tails of stage B; the code computes them a second time there,
+with the operations and operands of `orient2dadapt()`, so they are the same
+doubles, and Theorem 3 covers them like every other value of stage D.
 
 **Two zero products.** Outside the window the first test returns `det` in
 one more case, tested right there: `errbound` is +0 and each product has a

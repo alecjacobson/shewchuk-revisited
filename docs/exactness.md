@@ -409,6 +409,37 @@ every non-finite call of the input-domain test, by `library.input_domain`.
   floating-point stages produce, and a NaN for a coordinate that is not
   finite.
 
+Same operations, arranged differently (no value changes; `orient2d` only):
+
+- **Stages B and C on pairs.** Where the compiler has a generic two-lane
+  vector type (GCC, clang), `orient2dadapt()` computes the two products of
+  stage B, their tails, the four difference tails and the two correction
+  terms of stage C with it: lane 0 holds the operand of the left product,
+  lane 1 that of the right one. Each lane of `+`, `-`, `*` is the same
+  correctly rounded binary64 operation as on a `double` (assumption 1), the
+  no-contraction flags apply to it (assumption 2), and each source line is
+  the line of the 1996 macro (`Two_Product`, `Two_Diff_Tail`) applied to
+  both lanes, so every lane holds the double the scalar code computes. The
+  scalar code is still there for other compilers, and the test-only build
+  without compiler extensions (`library_portable`) compiles it:
+  `differential.library` and `differential.library_portable` must both
+  reproduce the recorded value hash, on every platform of the CI. The
+  estimate of stage B is `estimate(4, B)` written out,
+  `((B[0] + B[1]) + B[2]) + B[3]`.
+- **Stage D recomputes its inputs.** `orient2dadapt()` ends after stage C;
+  `orient2d_after_stage_c()` asks the integer stage and, if that declines,
+  `orient2d_stage_d()` computes the differences, the expansion `B` and the
+  tails again, from the same coordinates by the same operations, and runs
+  stage D of 1996 on them.
+- **One comparison, laid out for the common case.** The first test's window
+  and filter comparison are one condition; the code that follows a failed
+  condition tests the window again to choose between `orient2dadapt()` and
+  the paths outside the window. Which calls take which path is unchanged.
+
+The reason for all three is speed ([benchmarking.md](benchmarking.md), "What
+limits the first filters"); `library.stages`, `library.input_domain` and
+`library.orient2d_first_test` check the routes, the value hashes the values.
+
 Not arithmetic:
 
 - The constants are compile-time values. Each is checked against the formula

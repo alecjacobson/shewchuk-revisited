@@ -1,7 +1,7 @@
 # Proof: the exact integer stage
 
 Code: [`src/integer_stage.h`](../../src/integer_stage.h). Hook:
-`*_after_filter()`, `*_guard_failed()`, `orient2dadapt()` and
+`*_after_filter()`, `*_guard_failed()`, `orient2d_after_stage_c()` and
 `orient2d_outside_window()` in [`src/predicates.cpp`](../../src/predicates.cpp).
 Ledger: [`docs/exactness.md`](../exactness.md). When the stage is asked, and
 why that makes the predicates exact for every finite input:
@@ -427,8 +427,8 @@ In `predicates.cpp` the stage is called
 - when stage A has certified the sign but its guard does not hold
   (`*_guard_failed()`), with `prefer_floating_point`; a refusal means that
   stage A was valid, and its value is returned;
-- for `orient2d`, before stage D (inside `orient2dadapt()`, default request;
-  a refusal leads to stage D), when the error bound of its first test is
+- for `orient2d`, before stage D (`orient2d_after_stage_c()`, which
+  `orient2dadapt()` ends in; default request; a refusal leads to stage D), when the error bound of its first test is
   outside its window (`orient2d_outside_window()`, `prefer_floating_point`;
   a refusal leads to the 1996 code as it is), and when stage B's estimate is
   not finite (`orient2d_exact()`, `always_exact`).

@@ -27,7 +27,11 @@
 //   * SHEWCHUK_STAGE_HIT() marks which stage decides a call. It expands to
 //     nothing except in the test-only build (test_hooks.h);
 //   * orient2dadapt(), orient3dadapt() and incircleadapt() are never inlined
-//     into the predicates that call them (SHEWCHUK_NOINLINE, see its comment).
+//     into the predicates that call them (SHEWCHUK_NOINLINE, see its comment);
+//   * orient2dadapt() is stages B, Bx and C only, written on pairs of doubles
+//     where the compiler has them; stage D is orient2d_stage_d(), which
+//     computes the expansion B and the difference tails again
+//     (docs/exactness.md, "Differences from the 1996 code").
 //
 // Two things are new and not from 1996.
 //
@@ -35,7 +39,8 @@
 // insphere it is tried when the first filter (stage A) cannot certify the
 // sign, before the adaptive stages B, C and D (the *_after_filter()
 // functions); for orient2d, whose stages B and C are cheaper than it, it is
-// tried before stage D (in orient2dadapt()). It returns only a sign, so a
+// tried before stage D (in orient2d_after_stage_c()). It returns only a sign,
+// so a
 // call it decides returns -1.0, 0.0 or +1.0.
 //
 // The input-domain guard (filter_guard.h, docs/proofs/input-domain.md). The
@@ -472,15 +477,55 @@ double estimate(int elen, const double *e)
 }
 
 // ---------------------------------------------------------------------------
+// Pairs of doubles. Code generation only.
+//
+// Stages B and C of orient2d do the same operations on the operands of the
+// left and of the right product. Written with scalars, how those are paired
+// into two-lane instructions is the compiler's choice, and that choice
+// decides what the stages cost (measured: up to 9% between two versions of
+// one compiler, and no pairing at all with another). With the compiler's
+// generic two-lane vector type the pairing is in the source. Each lane of
+// +, - and * is the correctly rounded binary64 operation, as for a double,
+// and the flags that forbid contraction apply to it, so every value is the
+// one the scalar code computes.
+//
+// The scalar code remains, for compilers without that type, and it is what
+// the build without compiler extensions (SHEWCHUK_INTEGER_STAGE_PORTABLE)
+// compiles, so that the tests compare the two on every platform.
+// ---------------------------------------------------------------------------
+#if defined(__GNUC__) && !defined(SHEWCHUK_INTEGER_STAGE_PORTABLE)
+#define SHEWCHUK_PREDICATES_PAIRS 1
+typedef double Pair __attribute__((vector_size(16)));
+static_assert(sizeof(Pair) == 2 * sizeof(double));
+
+// (p[0], p[1])
+inline Pair load_pair(const double *p) noexcept
+{
+  Pair pair;
+  std::memcpy(&pair, p, sizeof pair);
+  return pair;
+}
+// (x, y) -> (y, x)
+inline Pair swap_pair(Pair pair) noexcept
+{
+  const Pair swapped = {pair[1], pair[0]};
+  return swapped;
+}
+#endif
+
+// ---------------------------------------------------------------------------
 // orient2d
 // ---------------------------------------------------------------------------
 
 #ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
 // The exact sign of orient2d from the integer stage alone, for the calls on
 // which no floating-point stage may be used. Never refuses a finite input.
-SHEWCHUK_NOINLINE double orient2d_exact(const double *pa, const double *pb, const double *pc)
+// Takes the coordinates by value, for the reason given at orient2dadapt().
+SHEWCHUK_NOINLINE double orient2d_exact(double ax, double ay, double bx, double by, double cx,
+                                        double cy)
 {
-  const int sign = integer_stage::orient2d(pa, pb, pc, integer_stage::Request::always_exact);
+  const double a[2] = {ax, ay}, b[2] = {bx, by}, c[2] = {cx, cy};
+  const int sign = integer_stage::orient2d(a, b, c, integer_stage::Request::always_exact);
   if (sign == integer_stage::not_finite) {
     SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
     return not_a_number();
@@ -490,25 +535,21 @@ SHEWCHUK_NOINLINE double orient2d_exact(const double *pa, const double *pb, cons
 }
 #endif
 
-/* predicates.c lines 1535-1617: orient2dadapt()
+/* predicates.c lines 1535-1617, the part of orient2dadapt() behind stage C:
+ * stage D.
  *
- * Not from 1996 (docs/proofs/input-domain.md, section 4): this function is
- * entered only with finite coordinates and either inside the floating-point
- * domain or with the error bound of the first filter inside the window of
- * shewchuk_orient2d(). In the second case the two products are far from the
- * subnormal range, so stage B is exact unless Split overflows on a huge
- * difference, which makes its estimate a NaN: that is tested for, and the
- * integer stage then decides. Stage C is covered by the same window. Stage D
- * runs only inside the floating-point domain (the integer stage in front of
- * it refuses nothing else). */
-SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const double *pc,
-                     double detsum)
+ * Stage D starts from the expansion B and the tails of the differences that
+ * orient2dadapt() computed. They are computed again here, by the same
+ * operations on the same coordinates, hence with the same values: that costs
+ * the rare calls that reach stage D a few operations, and lets
+ * orient2dadapt() be a function without a stack frame (see there). */
+SHEWCHUK_NOINLINE double orient2d_stage_d(double ax, double ay, double bx, double by, double cx,
+                                          double cy)
 {
   double acx, acy, bcx, bcy;
   double acxtail, acytail, bcxtail, bcytail;
   double detleft, detright;
   double detlefttail, detrighttail;
-  double det, errbound;
   double B[4], C1[8], C2[12], D[16];
   double B3;
   int C1length, C2length, Dlength;
@@ -526,10 +567,10 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
   double _i, _j;
   double _0;
 
-  acx = (double) (pa[0] - pc[0]);
-  bcx = (double) (pb[0] - pc[0]);
-  acy = (double) (pa[1] - pc[1]);
-  bcy = (double) (pb[1] - pc[1]);
+  acx = (double) (ax - cx);
+  bcx = (double) (bx - cx);
+  acy = (double) (ay - cy);
+  bcy = (double) (by - cy);
 
   Two_Product(acx, bcy, detleft, detlefttail);
   Two_Product(acy, bcx, detright, detrighttail);
@@ -538,75 +579,10 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
                B3, B[2], B[1], B[0]);
   B[3] = B3;
 
-  det = estimate(4, B);
-  errbound = ccwerrboundB * detsum;
-#ifdef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
-  if (std::fabs(det) >= errbound) {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
-    return det;
-  }
-#else
-  {
-    // fabs(det) >= errbound as a comparison of bit patterns (errbound is
-    // finite and not negative here), which also sees a det that is not
-    // finite. The coordinates are copied for the reason given below.
-    const guard::bits64 magnitude = guard::bits_of(det) & guard::magnitude_mask;
-    if (magnitude >= guard::infinity_bits) {
-      const double a[2] = {pa[0], pa[1]}, b[2] = {pb[0], pb[1]}, c2[2] = {pc[0], pc[1]};
-      return orient2d_exact(a, b, c2);
-    }
-    if (magnitude >= guard::bits_of(errbound)) {
-      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
-      return det;
-    }
-  }
-#endif
-
-  Two_Diff_Tail(pa[0], pc[0], acx, acxtail);
-  Two_Diff_Tail(pb[0], pc[0], bcx, bcxtail);
-  Two_Diff_Tail(pa[1], pc[1], acy, acytail);
-  Two_Diff_Tail(pb[1], pc[1], bcy, bcytail);
-
-  if ((acxtail == 0.0) && (acytail == 0.0)
-      && (bcxtail == 0.0) && (bcytail == 0.0)) {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_BX);
-    return det;
-  }
-
-  errbound = ccwerrboundC * detsum + resulterrbound * std::fabs(det);
-  det += (acx * bcytail + bcy * acxtail)
-       - (acy * bcxtail + bcx * acytail);
-  if (std::fabs(det) >= errbound) {
-    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_C);
-    return det;
-  }
-
-  // Not from 1996: the exact integer stage (integer_stage.h), tried before
-  // stage D. For orient2d it is here and not directly behind stage A as for
-  // the other predicates: stages B and C of orient2d cost less than the
-  // integer stage, stage D costs more. It refuses only coordinates that are
-  // too wide for its fast tiers and inside the floating-point domain: then
-  // stage D runs as in 1996.
-  //
-  // The stage gets a copy of the coordinates, not pa, pb and pc: if those
-  // pointers were passed on, the compiler could no longer hand the six
-  // coordinates to this function in registers, and stages B and C would wait
-  // for them to be loaded again (measured: 4 cycles per call on mixed
-  // workloads).
-#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
-  {
-    const double a[2] = {pa[0], pa[1]}, b[2] = {pb[0], pb[1]}, c2[2] = {pc[0], pc[1]};
-    const int sign = integer_stage::orient2d(a, b, c2);
-    if (sign == integer_stage::not_finite) {
-      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
-      return not_a_number();
-    }
-    if (sign != integer_stage::refused) {
-      SHEWCHUK_INTEGER_STAGE_HIT();
-      return sign;
-    }
-  }
-#endif
+  Two_Diff_Tail(ax, cx, acx, acxtail);
+  Two_Diff_Tail(bx, cx, bcx, bcxtail);
+  Two_Diff_Tail(ay, cy, acy, acytail);
+  Two_Diff_Tail(by, cy, bcy, bcytail);
 
   Two_Product(acxtail, bcy, s1, s0);
   Two_Product(acytail, bcx, t1, t0);
@@ -628,6 +604,190 @@ SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const
 
   SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_D);
   return(D[Dlength - 1]);
+}
+
+/* What follows stage C of orient2d.
+ *
+ * Not from 1996: the exact integer stage (integer_stage.h), tried before
+ * stage D. For orient2d it is here and not directly behind stage A as for
+ * the other predicates: stages B and C of orient2d cost less than the
+ * integer stage, stage D costs more. It refuses only coordinates that are
+ * too wide for its fast tiers and inside the floating-point domain: then
+ * stage D runs as in 1996. Stage D is a function of its own so that the
+ * calls the integer stage decides do not pay for its arrays. */
+SHEWCHUK_NOINLINE double orient2d_after_stage_c(double ax, double ay, double bx, double by,
+                                                double cx, double cy)
+{
+#ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+  {
+    const double a[2] = {ax, ay}, b[2] = {bx, by}, c[2] = {cx, cy};
+    const int sign = integer_stage::orient2d(a, b, c);
+    if (sign == integer_stage::not_finite) {
+      SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_NOT_FINITE);
+      return not_a_number();
+    }
+    if (sign != integer_stage::refused) {
+      SHEWCHUK_INTEGER_STAGE_HIT();
+      return sign;
+    }
+  }
+#endif
+  return orient2d_stage_d(ax, ay, bx, by, cx, cy);
+}
+
+/* predicates.c lines 1535-1617: orient2dadapt(), stages B, Bx and C. What
+ * follows them is orient2d_after_stage_c().
+ *
+ * Not from 1996 (docs/proofs/input-domain.md, section 4): this function is
+ * entered only with finite coordinates and either inside the floating-point
+ * domain or with the error bound of the first filter inside the window of
+ * shewchuk_orient2d(). In the second case the two products are far from the
+ * subnormal range, so stage B is exact unless Split overflows on a huge
+ * difference, which makes its estimate a NaN: that is tested for, and the
+ * integer stage then decides. Stage C is covered by the same window. Stage D
+ * runs only inside the floating-point domain (the integer stage in front of
+ * it refuses nothing else).
+ *
+ * Code generation: this function has no array and passes no pointer on, so
+ * that the compiler hands it the six coordinates in registers and gives it
+ * no stack frame: no register is saved or restored and nothing is stored.
+ * The expansion B is four scalars here, and what stage B returns is
+ * estimate(4, B) written out: B[0] + B[1] + B[2] + B[3], added in that
+ * order. The functions it ends in take the coordinates by value for the same
+ * reason. */
+SHEWCHUK_NOINLINE double orient2dadapt(const double *pa, const double *pb, const double *pc,
+                     double detsum)
+{
+  double acxtail, acytail, bcxtail, bcytail;
+  double detleft, detright;
+  double detlefttail, detrighttail;
+  double det, errbound;
+  double B0, B1, B2, B3;
+  double correction_left, correction_right;
+
+  double bvirt;
+  double avirt, bround, around;
+  double _i, _j;
+  double _0;
+
+#ifdef SHEWCHUK_PREDICATES_PAIRS
+  // Two lanes: the left product's operand and the right product's.
+  //   ac = (acx, acy), bc = (bcy, bcx), ac * bc = (detleft, detright).
+  // Each line is the line of the same name in the macros Two_Product and
+  // Two_Diff_Tail, done for both lanes.
+  const Pair a = load_pair(pa), c_xy = load_pair(pc);
+  const Pair b_yx = swap_pair(load_pair(pb)), c_yx = swap_pair(c_xy);
+  const Pair ac = a - c_xy;
+  const Pair bc = b_yx - c_yx;
+  Pair ac_tail, bc_tail;
+  {
+    const Pair x = ac * bc;
+    // Split(ac), Split(bc)
+    Pair c = splitter * ac;
+    Pair abig = c - ac;
+    const Pair ahi = c - abig;
+    const Pair alo = ac - ahi;
+    c = splitter * bc;
+    abig = c - bc;
+    const Pair bhi = c - abig;
+    const Pair blo = bc - bhi;
+    const Pair err1 = x - (ahi * bhi);
+    const Pair err2 = err1 - (alo * bhi);
+    const Pair err3 = err2 - (ahi * blo);
+    const Pair y = (alo * blo) - err3;
+    detleft = x[0], detlefttail = y[0];
+    detright = x[1], detrighttail = y[1];
+  }
+#else
+  double acx, acy, bcx, bcy;
+  double c;
+  double abig;
+  double ahi, alo, bhi, blo;
+  double err1, err2, err3;
+
+  acx = (double) (pa[0] - pc[0]);
+  bcx = (double) (pb[0] - pc[0]);
+  acy = (double) (pa[1] - pc[1]);
+  bcy = (double) (pb[1] - pc[1]);
+
+  Two_Product(acx, bcy, detleft, detlefttail);
+  Two_Product(acy, bcx, detright, detrighttail);
+#endif
+
+  Two_Two_Diff(detleft, detlefttail, detright, detrighttail,
+               B3, B2, B1, B0);
+
+  det = ((B0 + B1) + B2) + B3;
+  errbound = ccwerrboundB * detsum;
+#ifdef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
+  if (std::fabs(det) >= errbound) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
+    return det;
+  }
+#else
+  {
+    // fabs(det) >= errbound as a comparison of bit patterns (errbound is
+    // finite and not negative here), which also sees a det that is not
+    // finite.
+    const guard::bits64 magnitude = guard::bits_of(det) & guard::magnitude_mask;
+    if (magnitude >= guard::infinity_bits) {
+      return orient2d_exact(pa[0], pa[1], pb[0], pb[1], pc[0], pc[1]);
+    }
+    if (magnitude >= guard::bits_of(errbound)) {
+      SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_B);
+      return det;
+    }
+  }
+#endif
+
+#ifdef SHEWCHUK_PREDICATES_PAIRS
+  {
+    // Two_Diff_Tail(a, c, ac, ac_tail)
+    Pair bvirt2 = a - ac;
+    Pair avirt2 = ac + bvirt2;
+    Pair bround2 = bvirt2 - c_xy;
+    Pair around2 = a - avirt2;
+    ac_tail = around2 + bround2;
+    // Two_Diff_Tail(b, c, bc, bc_tail)
+    bvirt2 = b_yx - bc;
+    avirt2 = bc + bvirt2;
+    bround2 = bvirt2 - c_yx;
+    around2 = b_yx - avirt2;
+    bc_tail = around2 + bround2;
+  }
+  acxtail = ac_tail[0], acytail = ac_tail[1];
+  bcytail = bc_tail[0], bcxtail = bc_tail[1];
+#else
+  Two_Diff_Tail(pa[0], pc[0], acx, acxtail);
+  Two_Diff_Tail(pb[0], pc[0], bcx, bcxtail);
+  Two_Diff_Tail(pa[1], pc[1], acy, acytail);
+  Two_Diff_Tail(pb[1], pc[1], bcy, bcytail);
+#endif
+
+  if ((acxtail == 0.0) && (acytail == 0.0)
+      && (bcxtail == 0.0) && (bcytail == 0.0)) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_BX);
+    return det;
+  }
+
+  errbound = ccwerrboundC * detsum + resulterrbound * std::fabs(det);
+#ifdef SHEWCHUK_PREDICATES_PAIRS
+  {
+    // (acx * bcytail + bcy * acxtail, acy * bcxtail + bcx * acytail)
+    const Pair correction = ac * bc_tail + bc * ac_tail;
+    correction_left = correction[0], correction_right = correction[1];
+  }
+#else
+  correction_left = acx * bcytail + bcy * acxtail;
+  correction_right = acy * bcxtail + bcx * acytail;
+#endif
+  det += correction_left - correction_right;
+  if (std::fabs(det) >= errbound) {
+    SHEWCHUK_STAGE_HIT(SHEWCHUK_STAGE_C);
+    return det;
+  }
+
+  return orient2d_after_stage_c(pa[0], pa[1], pb[0], pb[1], pc[0], pc[1]);
 }
 
 #ifndef SHEWCHUK_PREDICATES_NO_INTEGER_STAGE
@@ -699,7 +859,12 @@ SHEWCHUK_NOINLINE double orient2d_outside_window(const double *pa, const double 
  * finite, nonnegative errbound and a finite det that is the floating-point
  * comparison fabs(det) >= errbound, and the window makes both finite. Inside
  * the range of the 1996 paper the error bound is in the window unless both
- * products are zero. */
+ * products are zero.
+ *
+ * Code generation: the window and the test are one condition, marked as the
+ * likely one, so that the common path falls through to the return and the
+ * rare paths branch away. A branch taken on the common path costs this
+ * function about a cycle in five (docs/benchmarking.md). */
 double shewchuk_orient2d(const double *pa, const double *pb, const double *pc)
 {
   double acx, acy, bcx, bcy;
@@ -733,16 +898,18 @@ double shewchuk_orient2d(const double *pa, const double *pb, const double *pc)
   const guard::bits64 ceiling_bits = guard::power_of_two_bits(guard::orient2d_ceiling_exponent);
   // floor <= errbound < ceiling, as one unsigned comparison. A NaN and a
   // negative zero have bit patterns above the ceiling's.
-  if (bound - floor_bits < ceiling_bits - floor_bits) {
+  const bool in_window = bound - floor_bits < ceiling_bits - floor_bits;
+  if (in_window & ((guard::bits_of(det) & guard::magnitude_mask) >= bound)) [[likely]] {
     SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_LEAF);
-    if ((guard::bits_of(det) & guard::magnitude_mask) >= bound) {
-      // Test-only build: report the stage the 1996 code decides this call in.
-      SHEWCHUK_STAGE_HIT(((detleft > 0.0) && (detright > 0.0)) ||
-                         ((detleft < 0.0) && (detright < 0.0))
-                             ? SHEWCHUK_STAGE_A
-                             : SHEWCHUK_STAGE_A0);
-      return det;
-    }
+    // Test-only build: report the stage the 1996 code decides this call in.
+    SHEWCHUK_STAGE_HIT(((detleft > 0.0) && (detright > 0.0)) ||
+                       ((detleft < 0.0) && (detright < 0.0))
+                           ? SHEWCHUK_STAGE_A
+                           : SHEWCHUK_STAGE_A0);
+    return det;
+  }
+  if (in_window) {
+    SHEWCHUK_PATH_HIT(SHEWCHUK_PATH_LEAF);
     return orient2dadapt(pa, pb, pc, detsum);
   }
   // Outside the window. The one case that ordinary input reaches (points on

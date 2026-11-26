@@ -75,11 +75,11 @@ if(Python3_FOUND)
     --binary "$<TARGET_FILE:bench_predicates>" --runs 3 --scale 0.002 --allow-invalid
     --out "${CMAKE_CURRENT_BINARY_DIR}/suite_smoke.json")
   set_tests_properties(bench.compare_smoke bench.suite_smoke PROPERTIES TIMEOUT 600)
-  add_test(NAME bench.readme_table COMMAND "${Python3_EXECUTABLE}"
-    "${PROJECT_SOURCE_DIR}/tools/readme_table.py" --check)
+  add_test(NAME bench.readme_chart COMMAND "${Python3_EXECUTABLE}"
+    "${PROJECT_SOURCE_DIR}/tools/readme_chart.py" --check)
   add_test(NAME bench.comparator_table COMMAND "${Python3_EXECUTABLE}"
     "${PROJECT_SOURCE_DIR}/tools/comparator_table.py" --check)
-  set_tests_properties(bench.readme_table bench.comparator_table PROPERTIES TIMEOUT 60)
+  set_tests_properties(bench.readme_chart bench.comparator_table PROPERTIES TIMEOUT 60)
 else()
   message(STATUS "Python 3 not found: bench.compare_smoke and bench.suite_smoke are not registered")
 endif()
