@@ -305,11 +305,33 @@ tools/bench_table.py bench/results/baseline-apple-m4-*.json
 
 The library is measured the same way with `--impl library` into
 `bench/results/library-apple-m4-<compiler>.json` (same build directories, same
-commands with `--impl library` added). The performance table of the README is
-generated from the two sets of files by `tools/readme_table.py`; the test
-`bench.readme_table` fails if the README and the files disagree. Cycles per
-call include the harness's loop (about 2 cycles, see `--impl overhead`), so
-ratios on the cheapest workloads understate the difference.
+commands with `--impl library` added). The performance chart of the README
+(`docs/img/performance-light.svg` and `performance-dark.svg`) and the table
+below are generated from the two sets of files by `tools/readme_chart.py`;
+the test `bench.readme_chart` fails if either disagrees with the files.
+Cycles per call include the harness's loop (about 2 cycles, see
+`--impl overhead`), so ratios on the cheapest workloads understate the
+difference.
+
+<!-- performance-table:begin -->
+**Apple clang 21**, CPU cycles per call, 1996 code → this library:
+
+| | random points | 2% near-degenerate | 60% near-degenerate | hardest cases |
+|---|--:|--:|--:|--:|
+| `orient2d` | 34.0 → 5.0 (**6.8x**) | 34.8 → 6.2 (**5.7x**) | 55.8 → 41.6 (**1.3x**) | 219 → 78.8 (**2.8x**) |
+| `orient3d` | 13.6 → 11.0 (**1.2x**) | 26.6 → 14.2 (**1.9x**) | 379 → 80.7 (**4.7x**) | 3,392 → 194 (**17.5x**) |
+| `incircle` | 15.3 → 11.9 (**1.3x**) | 55.5 → 14.1 (**3.9x**) | 1,184 → 69.8 (**17.0x**) | 15,448 → 200 (**77.1x**) |
+| `insphere` | 40.8 → 31.7 (**1.3x**) | 202 → 37.4 (**5.4x**) | 4,712 → 175 (**26.9x**) | 31,637 → 632 (**50.1x**) |
+
+**GCC 16**, CPU cycles per call, 1996 code → this library:
+
+| | random points | 2% near-degenerate | 60% near-degenerate | hardest cases |
+|---|--:|--:|--:|--:|
+| `orient2d` | 44.1 → 5.0 (**8.8x**) | 44.9 → 6.2 (**7.3x**) | 57.9 → 41.3 (**1.4x**) | 226 → 116 (**2.0x**) |
+| `orient3d` | 39.9 → 11.0 (**3.6x**) | 52.1 → 14.7 (**3.6x**) | 371 → 99.9 (**3.7x**) | 3,433 → 237 (**14.5x**) |
+| `incircle` | 39.8 → 12.1 (**3.3x**) | 78.8 → 15.2 (**5.2x**) | 1,144 → 86.2 (**13.3x**) | 15,813 → 257 (**61.4x**) |
+| `insphere` | 70.8 → 32.9 (**2.2x**) | 235 → 38.9 (**6.0x**) | 4,827 → 195 (**24.7x**) | 32,365 → 723 (**44.8x**) |
+<!-- performance-table:end -->
 
 Each number is the median of 10 fresh processes; `cycles_cv_percent` in the
 files is the run-to-run variation of the same binary, the harness's noise
