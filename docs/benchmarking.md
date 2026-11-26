@@ -266,6 +266,14 @@ tools/bench_suite.py --build-dir build-bench-gcc16 --runs 10 --overhead \
 tools/bench_table.py bench/results/baseline-apple-m4-*.json
 ```
 
+The library is measured the same way with `--impl library` into
+`bench/results/library-apple-m4-<compiler>.json` (same build directories, same
+commands with `--impl library` added). The performance table of the README is
+generated from the two sets of files by `tools/readme_table.py`; the test
+`bench.readme_table` fails if the README and the files disagree. Cycles per
+call include the harness's loop (about 2 cycles, see `--impl overhead`), so
+ratios on the cheapest workloads understate the difference.
+
 Each number is the median of 10 fresh processes; `cycles_cv_percent` in the
 files is the run-to-run variation of the same binary, the harness's noise
 floor, and the `context` of each file records the load average during the
