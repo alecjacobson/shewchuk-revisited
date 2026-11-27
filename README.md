@@ -68,9 +68,9 @@ Indirect_Predicates, GeometricPredicates), measured the same way
 ([docs/comparators.md](docs/comparators.md)): this library is the fastest on
 mixtures of random and near-degenerate points and on the hardest cases, by 6x
 to 10x on the hardest `orient3d`, `incircle` and `insphere` inputs. It is not
-the fastest everywhere: on random points Indirect_Predicates' `orient2d` is
-about 20% faster with Apple clang (level with GCC), and when coordinates span
-very different magnitudes CGAL's `incircle` is about 5x faster.
+the fastest everywhere: on random points Indirect_Predicates' `insphere` is
+about 9% faster with Apple clang, and when coordinates span very different
+magnitudes its `orient2d` is about 1.4x faster.
 
 Both implementations return the exact sign on every input tested inside the
 1996 code's exponent range (over 15 million cases checked against exact
