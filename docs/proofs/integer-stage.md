@@ -43,6 +43,10 @@ Notation: `[c]` is 1 if the condition `c` holds and 0 otherwise. A *limb* is
 an unsigned 64-bit integer. `Int<N>` is `N` limbs `w[0..N-1]`, least
 significant first, read as a two's-complement integer: its value is
 `sum w[i] 2^(64 i) - 2^(64 N) [w[N-1] >= 2^63]`, in `[-2^(64N-1), 2^(64N-1))`.
+`Var<K>` is the same with the number of limbs `n` chosen at run time, kept in
+storage for `33 K` limbs: only limbs `w[0..n-1]` are ever written or read,
+and the value is the one above with `N = n`. The fast tiers compute with
+`Int`, the wide tier with `Var`.
 
 ## 2. Scaling: `scale()`
 
@@ -156,8 +160,9 @@ The last column follows from `M < 2^W` and `12 < 2^4`, `48 < 2^6`,
 two). A value of magnitude `< 2^k` is representable in `k + 1` bits of two's
 complement.
 
-Tier `D` (the fast tiers `D = 1, ..., 5` and the wide tier `D = 33`; the
-argument is the same for every `D >= 1`) stores each kind in `D` limbs per
+Tier `D` (the fast tiers `D = 1, ..., 5`; the wide tier, which works with a
+`D` from 1 to 33 that it chooses from the width, see below; the argument is
+the same for every `D >= 1`) stores each kind in `D` limbs per
 polynomial degree:
 `D` for coordinates and differences, `2D` for the degree-2 kinds, `3D`, `4D`,
 `5D` for degrees 3, 4, 5 (`limbs_of` in the code). It accepts
@@ -204,9 +209,27 @@ integers through the expressions, for every `W`, and checks them against
 
 **The wide tier holds every finite input.** For a finite input,
 `1 <= lowest` and `highest <= 2099` (section 2), so `W <= 2098`. The wide
-tier has `D = 33` and accepts `W <= 64 * 33 - 3 = 2109`. (`D = 32` would stop
-at 2045.) Both facts are `static_assert`s in the header and are checked again
-by the script.
+tier has storage for `D = 33` limbs per difference, and tier 33 accepts
+`W <= 64 * 33 - 3 = 2109`. (`D = 32` would stop at 2045.) Both facts are
+`static_assert`s in the header and are checked again by the script.
+
+**The wide tier works with as many limbs as the width needs.** Given a width
+`W`, it computes with
+
+    D = limbs_for_width(W) = floor((W + 66) / 64) = ceil((W + 3) / 64)
+
+limbs per difference instead of all 33. That `D` is the smallest with
+`W <= 64 D - 3`: `64 D >= W + 3` by the ceiling, and `64 (D - 1) < W + 3`.
+So the table above, read for this `D`, says that every intermediate fits its
+`j D` limbs: the wide tier at width `W` *is* tier `D` of the derivation.
+`W <= 2098` gives `D <= floor(2164 / 64) = 33`, so `j D` limbs never exceed
+the storage of `33 j`; `W >= 0` gives `D >= 1`. The header checks all of
+this by enumeration at compile time, for every `W` from 0 to 2098
+(`limbs_for_width_is_right()`: `1 <= D <= 33`, `W <= 64D - 3`,
+`W > 64(D-1) - 3` unless `D = 1`, and `tier_holds_every_intermediate(D, W)`),
+and that every tier from 1 to 33 holds its limit and its bounds not one bit
+more (`every_tier_holds_its_limit()`). The script repeats the first check
+with exact integers.
 
 ## 4. The multi-limb operations
 
@@ -269,15 +292,36 @@ likewise for `a`). The `N + M` limbs therefore hold `a b` modulo
 **`sign`** returns -1 if the top bit is set, else 1 if any limb is nonzero,
 else 0: the sign of the two's-complement value.
 
+**Run-time lengths (`Var`).** The wide tier's `add`, `sub`, `mul` and `sign`
+are the algorithms above with the limb counts read from the operands: `add`
+and `sub` loop over `a.n` limbs and return `n = a.n` limbs; `mul` (its loops
+are in `mul_limbs()`, one function for all sizes) takes `n` and `m` limbs and
+returns `n + m`. The arguments above do not use that `N` and `M` are
+constants, so they hold as they are. What has to be shown in addition:
+
+- *the two operands of every `add` and `sub` have the same number of limbs.*
+  In tier `D` a coordinate has `D` limbs (`wide_coordinate()` sets `n = D`),
+  `add` and `sub` keep the number, `mul` adds the numbers; so a value has
+  `j D` limbs, `j` the number of coordinate factors in it, and the two
+  operands of every sum in section 6 have the same `j` (the determinant is
+  homogeneous). The checked build verifies `a.n == b.n` on every `add` and
+  `sub`, and `n == limbs_of(kind, D)` on every labelled intermediate;
+- *`n` limbs fit the storage.* `Var<K>` has room for `33 K` limbs and holds
+  values of `K` factors: `n = K D <= 33 K`. The type system keeps `K`
+  right: `mul` of a `Var<K>` and a `Var<L>` returns a `Var<K + L>`.
+
 ## 5. Conversion: `coordinate()`
 
-Tier `D` runs only if `W <= 64D - 3` (the wide tier: `W <= 2098 <= 2109`). Take a nonzero coordinate with odd part
+Tier `D` runs only if `W <= 64D - 3` (the wide tier: with
+`D = limbs_for_width(W)`, section 3; its conversion is `wide_coordinate()`,
+which is the code of the case `D >= 2` below with the loop running to that
+`D`, also when `D = 1`). Take a nonzero coordinate with odd part
 `m < 2^53` and `shift <= W - 1 <= 64D - 4` (section 2), and let
 `bit = shift & 63`, `low_part = m << bit` (modulo `2^64`).
 
 - `D = 1`: `shift <= 60`, so `bit = shift`, and `m 2^shift = |X| < 2^61`: no
   bit is shifted out, the single limb `low_part` is `|X|`.
-- `D >= 2`: `word = shift >> 6 <= D - 1`, and
+- `D >= 2` (and the wide tier for any `D >= 1`): `word = shift >> 6 <= D - 1`, and
   `high_part = (m >> 1) >> (63 - bit)`, which is `floor(m / 2^(64 - bit))`
   for `bit >= 1` and 0 for `bit = 0`; so `m 2^bit = low_part + 2^64
   high_part`. `low_part` goes to limb `word` and `high_part` to limb
@@ -318,7 +362,8 @@ the oracle.
 
 Every value in these functions is one of the kinds of section 3 (the code
 labels each with `is(kind, ...)`), is stored in the limbs section 3 assumes
-(the template arguments: a product of `Int<N>` and `Int<M>` is `Int<N+M>`),
+(the template arguments: a product of `Int<N>` and `Int<M>` is `Int<N+M>`;
+in the wide tier the limb counts kept in the values, section 4),
 and by sections 3 to 5 equals the exact integer it stands for. Hence the
 final value is `det(X)` exactly and `sign()` of it is the claimed sign.
 
@@ -354,7 +399,7 @@ under `exact_or_floating_point` only for `W > 317`; never under
 
 A tier therefore never runs outside the range section 3 covers: a fast tier
 only under its own limit, the wide tier at any width a finite input can
-have. No function narrows a value: the only width-changing operation is
+have, with the number of limbs of that width. No function narrows a value: the only width-changing operation is
 `mul`, which widens. `refused` (2) and `not_finite` (3) are distinct from
 every sign.
 
@@ -405,11 +450,18 @@ guard (`SHEWCHUK_PREDICATES_NO_INTEGER_STAGE`, test only) still returns the
   range. `m >> (zeros & 63)`: in `[0, 63]`. `m << bit`,
   `(m >> 1) >> (63 - bit)` with `bit = shift & 63` and `shift >= 0`: in
   `[0, 63]`. `shift >> 6` on a nonnegative `int`.
-- **Array indices.** All loops run over compile-time bounds; `mul` writes
-  `r.w[i + j]` and `r.w[i + M]` with `i < N`, `j < M`, into `N + M` limbs.
+- **Array indices.** In the fast tiers all loops run over compile-time
+  bounds; `mul` writes `r.w[i + j]` and `r.w[i + M]` with `i < N`, `j < M`,
+  into `N + M` limbs. In the wide tier the bounds are the limb counts `n` of
+  the operands, and `n <= 33 K` for a `Var<K>` (section 4), which is the size
+  of its array; `mul_limbs()` writes `r[i + j]` and `r[i + m]` with `i < n`,
+  `j < m` into the `n + m <= 33 (K + L)` limbs of a `Var<K + L>`.
 - **Uninitialized reads.** `mul` zeroes limbs `0 ... M-1` before row 0 reads
   them, and row `i` reads limb `i + M - 1` after row `i - 1` stored its carry
-  there. `scale()` writes every field it returns when it returns true.
+  there. `scale()` writes every field it returns when it returns true. A
+  `Var` is written in limbs `0 ... n-1` by the operation that creates it and
+  no operation reads a limb at or above an operand's `n`; `n >= 1` always
+  (`D >= 1`), so `w[n - 1]` exists.
 - **Type punning.** The bits of the doubles are read with `memcpy`.
 
 The three implementations of the primitives (`unsigned __int128`; MSVC's
@@ -424,8 +476,9 @@ that way on every platform.
 - Nothing about the stages in front of this one; see
   [input-domain.md](input-domain.md).
 - Nothing is claimed about speed here; see the pull requests and
-  `docs/benchmarking.md`. The wide tier is slow: schoolbook multiplication of
-  integers of up to 10560 bits.
+  `docs/benchmarking.md`. The wide tier is slower per limb than the fast
+  tiers (loops with run-time bounds, schoolbook multiplication), and its
+  integers have up to 10560 bits.
 
 ## 10. Return value
 
@@ -449,7 +502,9 @@ would see it (`docs/testing.md`):
 - inputs built to maximize every intermediate, at `W` exactly at each fast
   tier's limit and one past it, anywhere in the exponent range of a double,
   and for the wide tier up to the largest width a finite input has (2098),
-  where the largest values come within 5 bits of the bound for that width;
+  where the largest values come within 5 bits of the bound for that width,
+  and with every number of limbs from 1 to 33 at the narrowest and the
+  widest width of that number;
 - a negative control: a tier forced onto inputs 5 bits too wide returns wrong
   signs and trips the checks;
 - the scaling is compared with an independent decomposition (`frexp`) on

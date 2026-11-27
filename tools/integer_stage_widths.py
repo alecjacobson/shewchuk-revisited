@@ -15,7 +15,11 @@ the product of the bounds at every product), and checks that
 
   1. the header's magnitude_bits(kind, W) really bounds it: bound < 2^k;
   2. for every tier D and every W <= max_width(D), that magnitude plus a sign
-     bit fits the limbs: k + 1 <= 64 * limbs_of(kind, D).
+     bit fits the limbs: k + 1 <= 64 * limbs_of(kind, D);
+  3. for every width W a finite input can have, the number of limbs the wide
+     tier works with at that width, limbs_for_width(W), is at most the wide
+     tier's, holds every intermediate, and is the smallest whose tier accepts
+     W.
 
 The formulas are read from the header itself, so an edit to either side that
 breaks the agreement fails here. With --table it prints the table of the
@@ -130,6 +134,25 @@ def main():
         if narrower >= max_finite_width:
             print("FAIL: the wide tier is wider than it needs to be")
             failures += 1
+
+    # 3. The wide tier works with limbs_for_width(W) limbs per difference.
+    limbs_for_width_expression = re.search(
+        r"constexpr int limbs_for_width\(int W\)(?: noexcept)? \{ return ([^;]+); \}",
+        source).group(1).replace("/", "//")
+    most_limbs = 0
+    for W in range(0, max_finite_width + 1):
+        D = eval(limbs_for_width_expression, {"W": W})
+        most_limbs = max(most_limbs, D)
+        derived = largest_magnitudes(W)
+        too_small = [kind for kind in kinds
+                     if derived[kind].bit_length() + 1 > 64 * eval(limbs_of[kind], {"D": D})]
+        narrower = eval(max_width_expression, {"tier": D - 1})
+        if D < 1 or D > wide_tier or too_small or (D > 1 and W <= narrower):
+            print(f"FAIL: at W = {W} the wide tier works with {D} limbs per difference"
+                  + (f", too few for {', '.join(too_small)}" if too_small else ""))
+            failures += 1
+    print(f"the wide tier works with limbs_for_width(W) limbs per difference: checked for every "
+          f"W <= {max_finite_width}; at most {most_limbs} limbs")
 
     if "--table" in sys.argv:
         print()

@@ -25,8 +25,9 @@
 // floating-point expansion stages of 1996 are valid
 // (in_floating_point_domain() below, docs/proofs/input-domain.md): then the
 // stage returns `refused` and the caller runs those stages, as before this
-// stage existed; or it is not, and the wide tier, whose limbs hold any finite
-// double, decides it. A coordinate that is not finite gives `not_finite`.
+// stage existed; or it is not, and the wide tier decides it, with as many
+// limbs as the width needs (at most 33 per coordinate difference, which hold
+// any finite double). A coordinate that is not finite gives `not_finite`.
 //
 // All limb arithmetic is unsigned (no signed overflow is possible), and the
 // only floating-point operation in this file is copying the bits of a double.
@@ -106,8 +107,11 @@ enum class Request {
 };
 
 // The tiers. Tier D stores a coordinate difference in D limbs and accepts
-// widths up to max_width(D) = 64 D - 3. The fast tiers are D = 1 ... 5; the
-// wide tier is D = wide_tier and holds every finite input.
+// widths up to max_width(D) = 64 D - 3. The fast tiers are D = 1 ... 5, each
+// its own code with the number of limbs fixed at compile time. The wide tier
+// is one piece of code for every other width: it has room for D = wide_tier
+// limbs per difference, which hold every finite input, and works with the
+// limbs_for_width(W) <= wide_tier of them that the width at hand needs.
 inline constexpr int num_tiers = 5;
 constexpr int max_width(int tier) noexcept { return 64 * tier - 3; }
 inline constexpr int wide_tier = 33;
@@ -229,9 +233,41 @@ static_assert(!tier_holds_every_intermediate(5, max_width(5) + 1));
 static_assert(max_width(1) == 61 && max_width(2) == 125 && max_width(3) == 189 &&
               max_width(4) == 253 && max_width(5) == 317);
 // The derivation is the same for every D (docs/proofs/integer-stage.md,
-// section 3); the wide tier is one more instance of it.
+// section 3); the wide tier at its full size is one more instance of it.
 static_assert(tier_holds_every_intermediate(wide_tier, max_width(wide_tier)));
 static_assert(!tier_holds_every_intermediate(wide_tier, max_width(wide_tier) + 1));
+
+// The wide tier does not use all its limbs: for a width W it works with the
+// smallest number of limbs per difference whose tier holds W,
+//   limbs_for_width(W) = ceil((W + 3) / 64),
+// which is at most wide_tier for every finite input. Checked here for every
+// width there is, together with the derivation's claim for that number of
+// limbs: every intermediate fits.
+constexpr int limbs_for_width(int W) noexcept { return (W + 3 + 63) / 64; }
+constexpr bool limbs_for_width_is_right() noexcept {
+  for (int W = 0; W <= max_finite_width; W++) {
+    const int D = limbs_for_width(W);
+    if (D < 1 || D > wide_tier) return false;
+    if (W > max_width(D)) return false;
+    if (D > 1 && W <= max_width(D - 1)) return false;
+    if (!tier_holds_every_intermediate(D, W)) return false;
+  }
+  return true;
+}
+static_assert(limbs_for_width_is_right());
+static_assert(limbs_for_width(0) == 1 && limbs_for_width(61) == 1 && limbs_for_width(62) == 2 &&
+              limbs_for_width(max_finite_width) == wide_tier);
+// The derivation is the same for every number of limbs: each tier from 1 to
+// wide_tier holds every intermediate up to its limit, and its bounds do not
+// fit one bit more.
+constexpr bool every_tier_holds_its_limit() noexcept {
+  for (int D = 1; D <= wide_tier; D++) {
+    if (!tier_holds_every_intermediate(D, max_width(D))) return false;
+    if (tier_holds_every_intermediate(D, max_width(D) + 1)) return false;
+  }
+  return true;
+}
+static_assert(every_tier_holds_its_limit());
 
 // ---------------------------------------------------------------------------
 // Test-only instrumentation
@@ -502,6 +538,127 @@ SHEWCHUK_INTEGER_STAGE_INLINE Int<N> bounded([[maybe_unused]] Kind kind, [[maybe
 }
 
 // ---------------------------------------------------------------------------
+// The same integers with a number of limbs chosen at run time, for the wide
+// tier: `n` limbs, least significant first, two's complement, in storage for
+// K * wide_tier limbs. K is the number of factors of the determinant the
+// value has (a difference 1, a product of two differences 2, ...), so a
+// value of K factors in a tier of D limbs per difference has n = K * D
+// limbs, as in the fixed tiers. The operations are those above with the
+// loops running to n.
+// ---------------------------------------------------------------------------
+template <int K>
+struct Var {
+  int n;
+  limb w[K * wide_tier];
+};
+
+template <int K>
+SHEWCHUK_INTEGER_STAGE_INLINE bool is_negative(const Var<K>& a) noexcept {
+  return (a.w[a.n - 1] >> 63) != 0;
+}
+
+// a + b modulo 2^(64 n); a and b have the same number of limbs.
+template <int K>
+SHEWCHUK_INTEGER_STAGE_INLINE Var<K> add(const Var<K>& a, const Var<K>& b) noexcept {
+  Var<K> r;
+  r.n = a.n;
+  limb carry = 0;
+  for (int i = 0; i < a.n; i++) r.w[i] = add_carry(a.w[i], b.w[i], carry);
+  SHEWCHUK_INTEGER_STAGE_CHECK(a.n == b.n);
+  SHEWCHUK_INTEGER_STAGE_CHECK(is_negative(a) != is_negative(b) ||
+                               is_negative(r) == is_negative(a));
+  return r;
+}
+
+// a - b modulo 2^(64 n); a and b have the same number of limbs.
+template <int K>
+SHEWCHUK_INTEGER_STAGE_INLINE Var<K> sub(const Var<K>& a, const Var<K>& b) noexcept {
+  Var<K> r;
+  r.n = a.n;
+  limb borrow = 0;
+  for (int i = 0; i < a.n; i++) r.w[i] = sub_borrow(a.w[i], b.w[i], borrow);
+  SHEWCHUK_INTEGER_STAGE_CHECK(a.n == b.n);
+  SHEWCHUK_INTEGER_STAGE_CHECK(is_negative(a) == is_negative(b) ||
+                               is_negative(r) == is_negative(a));
+  return r;
+}
+
+// The exact product of an n-limb and an m-limb signed integer in n + m limbs:
+// the algorithm of mul() above. One copy of the code for all sizes.
+[[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE void mul_limbs(limb* r, const limb* a, int n,
+                                                               const limb* b, int m) noexcept {
+  for (int j = 0; j < m; j++) r[j] = 0;
+  for (int i = 0; i < n; i++) {
+    limb carry = 0;
+    for (int j = 0; j < m; j++) {
+      r[i + j] = multiply_add(a[i], b[j], r[i + j], carry, carry);
+    }
+    r[i + m] = carry;
+  }
+  const limb a_negative = limb{0} - (a[n - 1] >> 63);  // all ones or zero
+  const limb b_negative = limb{0} - (b[m - 1] >> 63);
+  limb borrow = 0;
+  for (int j = 0; j < m; j++) r[n + j] = sub_borrow(r[n + j], b[j] & a_negative, borrow);
+  borrow = 0;
+  for (int i = 0; i < n; i++) r[m + i] = sub_borrow(r[m + i], a[i] & b_negative, borrow);
+}
+template <int K, int L>
+SHEWCHUK_INTEGER_STAGE_INLINE Var<K + L> mul(const Var<K>& a, const Var<L>& b) noexcept {
+  Var<K + L> r;
+  r.n = a.n + b.n;
+  mul_limbs(r.w, a.w, a.n, b.w, b.n);
+  return r;
+}
+
+// -1, 0 or +1.
+template <int K>
+SHEWCHUK_INTEGER_STAGE_INLINE int sign(const Var<K>& a) noexcept {
+  limb any = 0;
+  for (int i = 0; i < a.n; i++) any |= a.w[i];
+  return is_negative(a) ? -1 : (any != 0 ? 1 : 0);
+}
+
+#ifdef SHEWCHUK_INTEGER_STAGE_CHECKED
+// Number of bits of |a|, for n limbs at a: the smallest k with |a| < 2^k.
+[[maybe_unused]] inline int bit_length_of_magnitude(const limb* a, int n) noexcept {
+  if ((a[n - 1] >> 63) == 0) {
+    for (int i = n - 1; i >= 0; i--) {
+      if (a[i] != 0) return 64 * i + bit_length(a[i]);
+    }
+    return 0;
+  }
+  // The negation, limb by limb; its highest nonzero limb. -2^(64n-1) is its
+  // own negation, and the result is then 64 n.
+  int top = 0;
+  limb top_limb = 0;
+  limb carry = 1;
+  for (int i = 0; i < n; i++) {
+    const limb inverted = ~a[i];
+    const limb negated = inverted + carry;
+    carry = negated < inverted;
+    if (negated != 0) top = i, top_limb = negated;
+  }
+  return 64 * top + bit_length(top_limb);
+}
+#endif
+
+// bounded() for the wide tier; in addition, the value has the number of
+// limbs of its kind.
+template <int K>
+SHEWCHUK_INTEGER_STAGE_INLINE Var<K> bounded([[maybe_unused]] Kind kind, [[maybe_unused]] int D,
+                                             [[maybe_unused]] int W, const Var<K>& value) noexcept {
+#ifdef SHEWCHUK_INTEGER_STAGE_CHECKED
+  const int bits = bit_length_of_magnitude(value.w, value.n);
+  SHEWCHUK_INTEGER_STAGE_CHECK(value.n == limbs_of(kind, D));
+  SHEWCHUK_INTEGER_STAGE_CHECK(value.n <= K * wide_tier);
+  SHEWCHUK_INTEGER_STAGE_CHECK(bits <= magnitude_bits(kind, W));
+  SHEWCHUK_INTEGER_STAGE_CHECK(bits <= 64 * value.n - 1);
+  if (bits > observed_bits[kind][tier_index(D)]) observed_bits[kind][tier_index(D)] = bits;
+#endif
+  return value;
+}
+
+// ---------------------------------------------------------------------------
 // Scaling: doubles -> integers with a common power-of-two factor
 // ---------------------------------------------------------------------------
 
@@ -625,6 +782,44 @@ SHEWCHUK_INTEGER_STAGE_INLINE Int<D> coordinate(const Scaled<K>& s, int i) noexc
   return bounded(COORDINATE, D, s.width, r);
 }
 
+// The same for the wide tier, in D = limbs_for_width(s.width) limbs.
+template <int K>
+SHEWCHUK_INTEGER_STAGE_INLINE Var<1> wide_coordinate(const Scaled<K>& s, int i) noexcept {
+  const int D = limbs_for_width(s.width);
+  const limb m = s.magnitude[i];
+  const int shift = s.shift[i];
+  SHEWCHUK_INTEGER_STAGE_CHECK(shift >= 0);
+  SHEWCHUK_INTEGER_STAGE_CHECK(m == 0 || shift + bit_length(m) <= s.width);
+  const int bit = shift & 63;
+  const int word = shift >> 6;
+  const limb low_part = m << bit;
+  // m >> (64 - bit) without a shift by 64 when bit is 0.
+  const limb high_part = (m >> 1) >> (63 - bit);
+  // If a part has no limb to go to, it is zero (nothing is dropped).
+  SHEWCHUK_INTEGER_STAGE_CHECK(m == 0 || word < D);
+  SHEWCHUK_INTEGER_STAGE_CHECK(word + 1 < D || high_part == 0);
+  // Negate if the coordinate is negative: (x XOR mask) - mask, mask = -1 or 0.
+  const limb mask = s.negative[i];
+  Var<1> r;
+  r.n = D;
+  limb borrow = 0;
+  for (int k = 0; k < D; k++) {
+    const limb magnitude = (k == word ? low_part : 0) | (k == word + 1 ? high_part : 0);
+    r.w[k] = sub_borrow(magnitude ^ mask, mask, borrow);
+  }
+  return bounded(COORDINATE, D, s.width, r);
+}
+
+// A or B, by a condition known at compile time.
+template <bool, class A, class B>
+struct Choose {
+  using type = A;
+};
+template <class A, class B>
+struct Choose<false, A, B> {
+  using type = B;
+};
+
 // ---------------------------------------------------------------------------
 // The four determinants in tier D. Same expressions and sign conventions as
 // the floating-point stage A of each predicate (and as predicates.c).
@@ -633,17 +828,26 @@ template <int D>
 struct Tier {
   static constexpr int limit = max_width(D);
 
-  template <int N>
-  static SHEWCHUK_INTEGER_STAGE_INLINE Int<N> is(Kind kind, int W, const Int<N>& value) noexcept {
-    return bounded(kind, D, W, value);
+  // A value with K factors: K * D limbs. The wide tier works with as many
+  // limbs per difference as the width needs, limbs_for_width(W) <= D.
+  template <int K>
+  using Number = typename Choose<D == wide_tier, Var<K>, Int<K * D>>::type;
+  static SHEWCHUK_INTEGER_STAGE_INLINE int limbs(int W) noexcept {
+    return D == wide_tier ? limbs_for_width(W) : D;
+  }
+
+  template <class Value>
+  static SHEWCHUK_INTEGER_STAGE_INLINE Value is(Kind kind, int W, const Value& value) noexcept {
+    return bounded(kind, limbs(W), W, value);
   }
   // The exact product a * b. Tiers 1 and 2, which take the inputs met in
-  // practice, get every multiplication expanded in place; the other tiers
-  // call one shared copy per operand size, which costs tier 3 nothing
-  // measurable and keeps the library's code smaller.
-  template <int N, int M>
-  static SHEWCHUK_INTEGER_STAGE_INLINE Int<N + M> times(const Int<N>& a, const Int<M>& b) noexcept {
-    if constexpr (D <= 2) {
+  // practice, get every multiplication expanded in place; the other fast
+  // tiers call one shared copy per operand size, which costs tier 3 nothing
+  // measurable and keeps the library's code smaller. The wide tier's
+  // product is one function for all sizes (mul_limbs()).
+  template <class A, class B>
+  static SHEWCHUK_INTEGER_STAGE_INLINE auto times(const A& a, const B& b) noexcept {
+    if constexpr (D <= 2 || D == wide_tier) {
       return mul(a, b);
     } else {
       return mul_out_of_line(a, b);
@@ -652,109 +856,113 @@ struct Tier {
 
   // a - b for scaled coordinates a and b.
   template <int K>
-  static SHEWCHUK_INTEGER_STAGE_INLINE Int<D> difference(const Scaled<K>& s, int a,
-                                                         int b) noexcept {
-    return is(DIFFERENCE, s.width, sub(coordinate<D>(s, a), coordinate<D>(s, b)));
+  static SHEWCHUK_INTEGER_STAGE_INLINE Number<1> difference(const Scaled<K>& s, int a,
+                                                             int b) noexcept {
+    if constexpr (D == wide_tier) {
+      return is(DIFFERENCE, s.width, sub(wide_coordinate(s, a), wide_coordinate(s, b)));
+    } else {
+      return is(DIFFERENCE, s.width, sub(coordinate<D>(s, a), coordinate<D>(s, b)));
+    }
   }
   // p * q for differences p and q.
-  static SHEWCHUK_INTEGER_STAGE_INLINE Int<2 * D> product2(int W, const Int<D>& p,
-                                                           const Int<D>& q) noexcept {
+  static SHEWCHUK_INTEGER_STAGE_INLINE Number<2> product2(int W, const Number<1>& p,
+                                                           const Number<1>& q) noexcept {
     return is(PRODUCT2, W, times(p, q));
   }
   // p q - r t for differences p, q, r, t.
-  static SHEWCHUK_INTEGER_STAGE_INLINE Int<2 * D> minor2(int W, const Int<D>& p, const Int<D>& q,
-                                                         const Int<D>& r,
-                                                         const Int<D>& t) noexcept {
+  static SHEWCHUK_INTEGER_STAGE_INLINE Number<2> minor2(int W, const Number<1>& p, const Number<1>& q,
+                                                         const Number<1>& r,
+                                                         const Number<1>& t) noexcept {
     return is(MINOR2, W, sub(product2(W, p, q), product2(W, r, t)));
   }
   // d * m for a difference d and a 2 x 2 minor m.
-  static SHEWCHUK_INTEGER_STAGE_INLINE Int<3 * D> product3(int W, const Int<D>& d,
-                                                           const Int<2 * D>& m) noexcept {
+  static SHEWCHUK_INTEGER_STAGE_INLINE Number<3> product3(int W, const Number<1>& d,
+                                                           const Number<2>& m) noexcept {
     return is(PRODUCT3, W, times(d, m));
   }
 
   static int orient2d(const Scaled<6>& s) noexcept {
     const int W = s.width;
-    const Int<D> acx = difference(s, 0, 4), acy = difference(s, 1, 5);
-    const Int<D> bcx = difference(s, 2, 4), bcy = difference(s, 3, 5);
+    const Number<1> acx = difference(s, 0, 4), acy = difference(s, 1, 5);
+    const Number<1> bcx = difference(s, 2, 4), bcy = difference(s, 3, 5);
     return sign(minor2(W, acx, bcy, acy, bcx));
   }
 
   static int orient3d(const Scaled<12>& s) noexcept {
     const int W = s.width;
-    const Int<D> adx = difference(s, 0, 9), ady = difference(s, 1, 10), adz = difference(s, 2, 11);
-    const Int<D> bdx = difference(s, 3, 9), bdy = difference(s, 4, 10), bdz = difference(s, 5, 11);
-    const Int<D> cdx = difference(s, 6, 9), cdy = difference(s, 7, 10), cdz = difference(s, 8, 11);
-    const Int<2 * D> bc = minor2(W, bdx, cdy, cdx, bdy);
-    const Int<2 * D> ca = minor2(W, cdx, ady, adx, cdy);
-    const Int<2 * D> ab = minor2(W, adx, bdy, bdx, ady);
+    const Number<1> adx = difference(s, 0, 9), ady = difference(s, 1, 10), adz = difference(s, 2, 11);
+    const Number<1> bdx = difference(s, 3, 9), bdy = difference(s, 4, 10), bdz = difference(s, 5, 11);
+    const Number<1> cdx = difference(s, 6, 9), cdy = difference(s, 7, 10), cdz = difference(s, 8, 11);
+    const Number<2> bc = minor2(W, bdx, cdy, cdx, bdy);
+    const Number<2> ca = minor2(W, cdx, ady, adx, cdy);
+    const Number<2> ab = minor2(W, adx, bdy, bdx, ady);
     // A partial sum of the three terms is bounded like the whole sum.
-    const Int<3 * D> partial = is(MINOR3, W, add(product3(W, adz, bc), product3(W, bdz, ca)));
+    const Number<3> partial = is(MINOR3, W, add(product3(W, adz, bc), product3(W, bdz, ca)));
     return sign(is(MINOR3, W, add(partial, product3(W, cdz, ab))));
   }
 
   static int incircle(const Scaled<8>& s) noexcept {
     const int W = s.width;
-    const Int<D> adx = difference(s, 0, 6), ady = difference(s, 1, 7);
-    const Int<D> bdx = difference(s, 2, 6), bdy = difference(s, 3, 7);
-    const Int<D> cdx = difference(s, 4, 6), cdy = difference(s, 5, 7);
-    const Int<2 * D> bc = minor2(W, bdx, cdy, cdx, bdy);
-    const Int<2 * D> ca = minor2(W, cdx, ady, adx, cdy);
-    const Int<2 * D> ab = minor2(W, adx, bdy, bdx, ady);
-    const Int<2 * D> alift = is(LIFT2, W, add(product2(W, adx, adx), product2(W, ady, ady)));
-    const Int<2 * D> blift = is(LIFT2, W, add(product2(W, bdx, bdx), product2(W, bdy, bdy)));
-    const Int<2 * D> clift = is(LIFT2, W, add(product2(W, cdx, cdx), product2(W, cdy, cdy)));
-    const Int<4 * D> a = is(INCIRCLE_TERM, W, times(alift, bc));
-    const Int<4 * D> b = is(INCIRCLE_TERM, W, times(blift, ca));
-    const Int<4 * D> c = is(INCIRCLE_TERM, W, times(clift, ab));
-    const Int<4 * D> partial = is(INCIRCLE_DET, W, add(a, b));
+    const Number<1> adx = difference(s, 0, 6), ady = difference(s, 1, 7);
+    const Number<1> bdx = difference(s, 2, 6), bdy = difference(s, 3, 7);
+    const Number<1> cdx = difference(s, 4, 6), cdy = difference(s, 5, 7);
+    const Number<2> bc = minor2(W, bdx, cdy, cdx, bdy);
+    const Number<2> ca = minor2(W, cdx, ady, adx, cdy);
+    const Number<2> ab = minor2(W, adx, bdy, bdx, ady);
+    const Number<2> alift = is(LIFT2, W, add(product2(W, adx, adx), product2(W, ady, ady)));
+    const Number<2> blift = is(LIFT2, W, add(product2(W, bdx, bdx), product2(W, bdy, bdy)));
+    const Number<2> clift = is(LIFT2, W, add(product2(W, cdx, cdx), product2(W, cdy, cdy)));
+    const Number<4> a = is(INCIRCLE_TERM, W, times(alift, bc));
+    const Number<4> b = is(INCIRCLE_TERM, W, times(blift, ca));
+    const Number<4> c = is(INCIRCLE_TERM, W, times(clift, ab));
+    const Number<4> partial = is(INCIRCLE_DET, W, add(a, b));
     return sign(is(INCIRCLE_DET, W, add(partial, c)));
   }
 
   // x^2 + y^2 + z^2 for differences x, y, z.
-  static SHEWCHUK_INTEGER_STAGE_INLINE Int<2 * D> lift3(int W, const Int<D>& x, const Int<D>& y,
-                                                        const Int<D>& z) noexcept {
-    const Int<2 * D> partial = is(LIFT3, W, add(product2(W, x, x), product2(W, y, y)));
+  static SHEWCHUK_INTEGER_STAGE_INLINE Number<2> lift3(int W, const Number<1>& x, const Number<1>& y,
+                                                        const Number<1>& z) noexcept {
+    const Number<2> partial = is(LIFT3, W, add(product2(W, x, x), product2(W, y, y)));
     return is(LIFT3, W, add(partial, product2(W, z, z)));
   }
   // The combination p +- q + r of three PRODUCT3 values.
-  static SHEWCHUK_INTEGER_STAGE_INLINE Int<3 * D> minor3(int W, const Int<3 * D>& p,
-                                                         bool subtract_q, const Int<3 * D>& q,
-                                                         const Int<3 * D>& r) noexcept {
-    const Int<3 * D> partial = is(MINOR3, W, subtract_q ? sub(p, q) : add(p, q));
+  static SHEWCHUK_INTEGER_STAGE_INLINE Number<3> minor3(int W, const Number<3>& p,
+                                                         bool subtract_q, const Number<3>& q,
+                                                         const Number<3>& r) noexcept {
+    const Number<3> partial = is(MINOR3, W, subtract_q ? sub(p, q) : add(p, q));
     return is(MINOR3, W, add(partial, r));
   }
 
   static int insphere(const Scaled<15>& s) noexcept {
     const int W = s.width;
-    const Int<D> aex = difference(s, 0, 12), aey = difference(s, 1, 13), aez = difference(s, 2, 14);
-    const Int<D> bex = difference(s, 3, 12), bey = difference(s, 4, 13), bez = difference(s, 5, 14);
-    const Int<D> cex = difference(s, 6, 12), cey = difference(s, 7, 13), cez = difference(s, 8, 14);
-    const Int<D> dex = difference(s, 9, 12), dey = difference(s, 10, 13), dez = difference(s, 11, 14);
-    const Int<2 * D> ab = minor2(W, aex, bey, bex, aey);
-    const Int<2 * D> bc = minor2(W, bex, cey, cex, bey);
-    const Int<2 * D> cd = minor2(W, cex, dey, dex, cey);
-    const Int<2 * D> da = minor2(W, dex, aey, aex, dey);
-    const Int<2 * D> ac = minor2(W, aex, cey, cex, aey);
-    const Int<2 * D> bd = minor2(W, bex, dey, dex, bey);
+    const Number<1> aex = difference(s, 0, 12), aey = difference(s, 1, 13), aez = difference(s, 2, 14);
+    const Number<1> bex = difference(s, 3, 12), bey = difference(s, 4, 13), bez = difference(s, 5, 14);
+    const Number<1> cex = difference(s, 6, 12), cey = difference(s, 7, 13), cez = difference(s, 8, 14);
+    const Number<1> dex = difference(s, 9, 12), dey = difference(s, 10, 13), dez = difference(s, 11, 14);
+    const Number<2> ab = minor2(W, aex, bey, bex, aey);
+    const Number<2> bc = minor2(W, bex, cey, cex, bey);
+    const Number<2> cd = minor2(W, cex, dey, dex, cey);
+    const Number<2> da = minor2(W, dex, aey, aex, dey);
+    const Number<2> ac = minor2(W, aex, cey, cex, aey);
+    const Number<2> bd = minor2(W, bex, dey, dex, bey);
     // abc = aez bc - bez ac + cez ab, and so on.
-    const Int<3 * D> abc =
+    const Number<3> abc =
         minor3(W, product3(W, aez, bc), true, product3(W, bez, ac), product3(W, cez, ab));
-    const Int<3 * D> bcd =
+    const Number<3> bcd =
         minor3(W, product3(W, bez, cd), true, product3(W, cez, bd), product3(W, dez, bc));
-    const Int<3 * D> cda =
+    const Number<3> cda =
         minor3(W, product3(W, cez, da), false, product3(W, dez, ac), product3(W, aez, cd));
-    const Int<3 * D> dab =
+    const Number<3> dab =
         minor3(W, product3(W, dez, ab), false, product3(W, aez, bd), product3(W, bez, da));
-    const Int<2 * D> alift = lift3(W, aex, aey, aez);
-    const Int<2 * D> blift = lift3(W, bex, bey, bez);
-    const Int<2 * D> clift = lift3(W, cex, cey, cez);
-    const Int<2 * D> dlift = lift3(W, dex, dey, dez);
+    const Number<2> alift = lift3(W, aex, aey, aez);
+    const Number<2> blift = lift3(W, bex, bey, bez);
+    const Number<2> clift = lift3(W, cex, cey, cez);
+    const Number<2> dlift = lift3(W, dex, dey, dez);
     // det = (dlift abc - clift dab) + (blift cda - alift bcd)
-    const Int<5 * D> left = is(INSPHERE_DET, W,
+    const Number<5> left = is(INSPHERE_DET, W,
                                sub(is(INSPHERE_TERM, W, times(dlift, abc)),
                                    is(INSPHERE_TERM, W, times(clift, dab))));
-    const Int<5 * D> right = is(INSPHERE_DET, W,
+    const Number<5> right = is(INSPHERE_DET, W,
                                 sub(is(INSPHERE_TERM, W, times(blift, cda)),
                                     is(INSPHERE_TERM, W, times(alift, bcd))));
     return sign(is(INSPHERE_DET, W, add(left, right)));
@@ -863,9 +1071,9 @@ static_assert(num_tiers == 5, "the two macros above list the fast tiers explicit
     }                                                                           \
   }
 
-// orient2d: the wide tier's determinant, never inlined: its integers are large
-// (docs/proofs/input-domain.md, section 7), and the stack they need must not
-// become part of the frame of the fast tiers.
+// orient2d: the wide tier's determinant, never inlined: the storage of its
+// integers is large (docs/proofs/input-domain.md, section 7), and the stack
+// it needs must not become part of the frame of the fast tiers.
 [[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_orient2d(const Scaled<6>& s) noexcept {
   return Tier<wide_tier>::orient2d(s);
 }
@@ -893,9 +1101,9 @@ static_assert(num_tiers == 5, "the two macros above list the fast tiers explicit
   return orient2d(pa, pb, pc);
 }
 
-// orient3d: the wide tier's determinant, never inlined: its integers are large
-// (docs/proofs/input-domain.md, section 7), and the stack they need must not
-// become part of the frame of the fast tiers.
+// orient3d: the wide tier's determinant, never inlined: the storage of its
+// integers is large (docs/proofs/input-domain.md, section 7), and the stack
+// it needs must not become part of the frame of the fast tiers.
 [[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_orient3d(const Scaled<12>& s) noexcept {
   return Tier<wide_tier>::orient3d(s);
 }
@@ -925,9 +1133,9 @@ static_assert(num_tiers == 5, "the two macros above list the fast tiers explicit
   return orient3d(pa, pb, pc, pd);
 }
 
-// incircle: the wide tier's determinant, never inlined: its integers are large
-// (docs/proofs/input-domain.md, section 7), and the stack they need must not
-// become part of the frame of the fast tiers.
+// incircle: the wide tier's determinant, never inlined: the storage of its
+// integers is large (docs/proofs/input-domain.md, section 7), and the stack
+// it needs must not become part of the frame of the fast tiers.
 [[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_incircle(const Scaled<8>& s) noexcept {
   return Tier<wide_tier>::incircle(s);
 }
@@ -957,9 +1165,9 @@ static_assert(num_tiers == 5, "the two macros above list the fast tiers explicit
   return incircle(pa, pb, pc, pd);
 }
 
-// insphere: the wide tier's determinant, never inlined: its integers are large
-// (docs/proofs/input-domain.md, section 7), and the stack they need must not
-// become part of the frame of the fast tiers.
+// insphere: the wide tier's determinant, never inlined: the storage of its
+// integers is large (docs/proofs/input-domain.md, section 7), and the stack
+// it needs must not become part of the frame of the fast tiers.
 [[maybe_unused]] SHEWCHUK_INTEGER_STAGE_NOINLINE int wide_insphere(const Scaled<15>& s) noexcept {
   return Tier<wide_tier>::insphere(s);
 }
