@@ -225,79 +225,55 @@ The table for the main workloads is in
 
 - On mixtures of random and near-degenerate inputs (`mix_easy`,
   `mix_surface`) and on the hardest cases (`stage_D`) this library is the
-  fastest of the exact implementations for every predicate, except
-  `orient2d` on `mix_easy` with Apple clang, where Indirect_Predicates is 6%
-  ahead. On `stage_D` the margin over the best comparator is 1.3x to 1.9x for
-  `orient2d` and 6x to 10x for the other three predicates.
-- **On uniform random input it is not the fastest everywhere.** With Apple
-  clang, Indirect_Predicates' first filter is 19% faster for `orient2d` and
-  6% faster for `insphere`, and GeometricPredicates is 2% faster for
-  `incircle`. With GCC the library is level with Indirect_Predicates for
-  `orient2d` and `orient3d` and ahead elsewhere.
+  fastest of the exact implementations for every predicate and both
+  compilers. On `stage_D` the margin over the best comparator is 1.3x to 2.0x
+  for `orient2d` and 6x to 10x for the other three predicates.
+- **On uniform random input it is level with the best or ahead, with two
+  exceptions.** With Apple clang, Indirect_Predicates' first filter is 9%
+  faster for `insphere` and GeometricPredicates is 3% faster for `incircle`.
+  `orient2d` is level with Indirect_Predicates with Apple clang and 19% ahead
+  with GCC.
 - **On inputs whose coordinates have very different exponents
-  (`wide_exponents`) it loses clearly for three predicates**: these inputs
-  are too wide for the integer stage, so the library falls back to the 1996
-  stages.
+  (`wide_exponents`) it is the fastest for `orient3d`, `incircle` and
+  `insphere`** (1.5x to 5.7x over the best comparator) since the integer
+  stage has tiers up to 317 bits, **and loses for `orient2d`**, where
+  Indirect_Predicates is 1.37x faster.
 
 Every benchmark, of all workloads, on which a comparator beats the library by
-more than 2% (`tools/comparator_table.py --losses`, medians of separate
-sessions), with the paired same-session ratio where one was measured
-(`tools/compare_revs.py --impl-a library --impl-b NAME`, 10 alternating
-rounds; a ratio below 1 means the comparator is faster):
+more than 2% (`tools/comparator_table.py --losses`). The comparators' numbers
+and the library's are medians of separate sessions; the paired same-session
+comparisons made for an earlier version of the library were not repeated:
 
-| compiler | predicate | workload | comparator | its cycles | this library | library / comparator | paired comparator / library (95% CI) |
-|---|---|---|---|--:|--:|--:|---|
-| Apple clang 21 | `orient2d` | `uniform` | Indirect_Predicates | 4.1 | 5.0 | 1.23x | 0.814 [0.814, 0.815], faster |
-| Apple clang 21 | `orient2d` | `wide_exponents` | Indirect_Predicates | 6.4 | 10.4 | 1.62x | 0.616 [0.615, 0.618], faster |
-| Apple clang 21 | `orient2d` | `degenerate_lattice` | Indirect_Predicates | 21.3 | 27.7 | 1.30x | 0.770 [0.768, 0.770], faster |
-| Apple clang 21 | `orient2d` | `stage_A0` | Indirect_Predicates | 4.1 | 5.0 | 1.23x | 0.813 [0.812, 0.816], faster |
-| Apple clang 21 | `orient2d` | `stage_A` | Indirect_Predicates | 4.1 | 5.0 | 1.23x | 0.812 [0.812, 0.814], faster |
-| Apple clang 21 | `orient2d` | `stage_B` | Indirect_Predicates | 20.7 | 21.8 | 1.05x | 0.951 [0.950, 0.952], faster |
-| Apple clang 21 | `orient2d` | `stage_Bx` | Indirect_Predicates | 21.4 | 25.6 | 1.20x | 0.837 [0.836, 0.837], faster |
-| Apple clang 21 | `orient2d` | `mix_easy` | Indirect_Predicates | 5.8 | 6.2 | 1.06x | 0.946 [0.944, 0.950], faster |
-| Apple clang 21 | `orient3d` | `wide_exponents` | Indirect_Predicates | 77.2 | 108 | 1.40x | 0.719 [0.713, 0.722], faster |
-| Apple clang 21 | `insphere` | `uniform` | Indirect_Predicates | 28.7 | 30.7 | 1.07x | 0.937 [0.935, 0.938], faster |
-| Apple clang 21 | `incircle` | `wide_exponents` | CGAL EPICK | 333 | 1,625 | 4.87x | 0.206 [0.205, 0.207], faster |
-| Apple clang 21 | `orient2d` | `degenerate_lattice` | GeometricPredicates | 22.9 | 27.7 | 1.21x | 0.827 [0.825, 0.829], faster |
-| Apple clang 21 | `orient2d` | `degenerate_53bit` | GeometricPredicates | 55.3 | 57.1 | 1.03x | 0.960 [0.956, 0.967], faster |
-| Apple clang 21 | `orient2d` | `stage_B` | GeometricPredicates | 17.2 | 21.8 | 1.27x | 0.788 [0.787, 0.788], faster |
-| Apple clang 21 | `incircle` | `uniform` | GeometricPredicates | 11.5 | 11.8 | 1.02x | 0.975 [0.974, 0.977], faster |
-| Apple clang 21 | `incircle` | `wide_exponents` | GeometricPredicates | 722 | 1,625 | 2.25x | 0.448 [0.447, 0.449], faster |
-| GCC 16 | `orient2d` | `wide_exponents` | Indirect_Predicates | 6.9 | 10.5 | 1.53x | 0.655 [0.654, 0.655], faster |
-| GCC 16 | `orient2d` | `degenerate_lattice` | Indirect_Predicates | 21.2 | 29.8 | 1.41x | 0.710 [0.710, 0.711], faster |
-| GCC 16 | `orient2d` | `stage_B` | Indirect_Predicates | 20.7 | 22.1 | 1.07x | 0.936 [0.936, 0.937], faster |
-| GCC 16 | `orient2d` | `stage_Bx` | Indirect_Predicates | 21.3 | 27.8 | 1.31x | 0.766 [0.766, 0.767], faster |
-| GCC 16 | `orient2d` | `stage_C` | Indirect_Predicates | 25.2 | 33.1 | 1.31x | 0.763 [0.763, 0.764], faster |
-| GCC 16 | `orient3d` | `wide_exponents` | Indirect_Predicates | 88.4 | 108 | 1.23x | 0.818 [0.813, 0.823], faster |
-| GCC 16 | `incircle` | `wide_exponents` | CGAL EPICK | 290 | 1,621 | 5.59x | 0.179 [0.179, 0.180], faster |
-| GCC 16 | `orient2d` | `degenerate_lattice` | GeometricPredicates | 23.2 | 29.8 | 1.28x | 0.780 [0.779, 0.780], faster |
-| GCC 16 | `orient2d` | `degenerate_53bit` | GeometricPredicates | 52.6 | 62.3 | 1.18x | 0.847 [0.834, 0.849], faster |
-| GCC 16 | `orient2d` | `stage_B` | GeometricPredicates | 15.3 | 22.1 | 1.44x | 0.691 [0.691, 0.693], faster |
-| GCC 16 | `orient3d` | `wide_exponents` | GeometricPredicates† | 102 | 108 | 1.06x | not measured |
-| GCC 16 | `orient3d` | `degenerate_lattice` | GeometricPredicates | 92.9 | 101 | 1.09x | not measured |
-| GCC 16 | `incircle` | `wide_exponents` | GeometricPredicates | 652 | 1,621 | 2.48x | 0.402 [0.401, 0.403], faster |
+| compiler | predicate | workload | comparator | its cycles | this library | library / comparator |
+|---|---|---|---|--:|--:|--:|
+| Apple clang 21 | `orient2d` | `wide_exponents` | Indirect_Predicates | 6.4 | 8.8 | 1.37x |
+| Apple clang 21 | `orient2d` | `degenerate_lattice` | Indirect_Predicates | 21.3 | 25.4 | 1.19x |
+| Apple clang 21 | `orient2d` | `stage_Bx` | Indirect_Predicates | 21.4 | 23.3 | 1.09x |
+| Apple clang 21 | `insphere` | `uniform` | Indirect_Predicates | 28.7 | 31.6 | 1.10x |
+| Apple clang 21 | `orient2d` | `degenerate_lattice` | GeometricPredicates | 22.9 | 25.4 | 1.11x |
+| Apple clang 21 | `orient2d` | `stage_B` | GeometricPredicates | 17.2 | 19.4 | 1.13x |
+| Apple clang 21 | `incircle` | `uniform` | GeometricPredicates | 11.5 | 11.9 | 1.03x |
+| GCC 16 | `orient2d` | `wide_exponents` | Indirect_Predicates | 6.9 | 9.4 | 1.37x |
+| GCC 16 | `orient2d` | `degenerate_lattice` | Indirect_Predicates | 21.2 | 25.0 | 1.18x |
+| GCC 16 | `orient2d` | `stage_Bx` | Indirect_Predicates | 21.3 | 22.3 | 1.05x |
+| GCC 16 | `orient2d` | `stage_C` | Indirect_Predicates | 25.2 | 27.6 | 1.09x |
+| GCC 16 | `orient2d` | `degenerate_lattice` | GeometricPredicates | 23.2 | 25.0 | 1.08x |
+| GCC 16 | `orient2d` | `degenerate_53bit` | GeometricPredicates | 52.6 | 63.1 | 1.20x |
+| GCC 16 | `orient2d` | `stage_B` | GeometricPredicates | 15.3 | 18.4 | 1.20x |
+| GCC 16 | `orient3d` | `degenerate_lattice` | GeometricPredicates | 92.9 | 102 | 1.10x |
 
 What the comparators do differently there, as far as their code was read
 (none of this was confirmed by profiling):
 
-- `orient2d`, first filter (Indirect_Predicates): one branch-free
-  expression, `(det >= eb) - (-det >= eb)` with `eb` a constant times
-  `|l| + |r|`, and the result is the sign, not the determinant.
-- `orient2d`, `orient3d` on `wide_exponents` (Indirect_Predicates): after
-  the filter it goes straight to one exact expansion evaluation. The library
-  walks through the 1996 stages B, C and D for inputs its integer stage
-  declines.
-- `incircle` on `wide_exponents` (CGAL): behind the static filter comes
-  interval arithmetic, whose bound follows the actual magnitudes of every
-  intermediate, where the 1996 filter has one bound, a constant times the
-  permanent; and behind that, rational arithmetic. GeometricPredicates runs
-  the stages of the 1996 code there at less than half the cost of the 1996
-  code and of the library, with `fma`-based products and fixed-size
-  expansions.
+- `orient2d` on `wide_exponents` (Indirect_Predicates): after the filter it
+  goes straight to one exact expansion evaluation. The library runs stages B
+  and C first and then scales the coordinates for its integer stage.
 - `orient2d` on exactly degenerate lattice inputs and on the inputs of
-  stages B and Bx (Indirect_Predicates, GeometricPredicates): their
-  expansion evaluation behind the filter costs 15 to 23 cycles, less than
-  the library's path through its own stages (22 to 30).
+  stages B, Bx and C (Indirect_Predicates, GeometricPredicates): their
+  expansion evaluation behind the filter costs 15 to 25 cycles, less than
+  the library's path through its own stages (18 to 28).
+- `insphere` on uniform input (Indirect_Predicates): a first filter with
+  fewer operations; the library's also carries the input-domain guard.
 
 The slow sides of the comparators, for balance: Geogram's filters cost 40 to
 100 cycles on random input (their error bound needs the largest input
