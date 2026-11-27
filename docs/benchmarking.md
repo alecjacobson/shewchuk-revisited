@@ -109,10 +109,11 @@ B, Bx, C or D (for `orient2d`: those tagged D) in its exact integer stage
 instead, in the tier their width selects (`docs/proofs/integer-stage.md`):
 the `near_degenerate`, `degenerate_*`, `stage_B`, `stage_Bx` and `stage_C`
 inputs are at most 64 bits wide (tier 1, a few in tier 2) and the `stage_D`
-inputs 88 to 126 bits (tier 2, a few in tier 3). Of the `wide_exponents`
-inputs that the first filter leaves open, all of `insphere`'s fit tier 3,
-15% of `incircle`'s do, and almost none of `orient2d`'s and `orient3d`'s:
-those are too wide and fall through to the 1996 stages.
+inputs 88 to 126 bits (tier 2, a few in tier 3). The `wide_exponents` inputs
+that the first filter leaves open are up to 173 bits wide for `insphere`
+(tier 3), 253 for `incircle` (tier 4), 293 for `orient3d` (tiers 4 and 5)
+and 333 for `orient2d`: only the widest of `orient2d`'s are too wide for the
+fast tiers and fall through to stage D of 1996.
 
 | Workload | Definition |
 |---|---|

@@ -16,7 +16,7 @@ coordinates (any bit patterns),
 - `not_finite`, if a coordinate is an infinity or a NaN;
 - `refused`, only if the coordinates are inside the floating-point domain
   (section 7) and, unless the caller asked for `prefer_floating_point`, their
-  width `W` (section 2) exceeds 189;
+  width `W` (section 2) exceeds 317;
 - otherwise the exact sign (-1, 0, +1) of the predicate's determinant, with
   the sign convention of the public functions. In particular it never refuses
   a finite input outside the floating-point domain, whatever its width, and
@@ -156,7 +156,7 @@ The last column follows from `M < 2^W` and `12 < 2^4`, `48 < 2^6`,
 two). A value of magnitude `< 2^k` is representable in `k + 1` bits of two's
 complement.
 
-Tier `D` (the fast tiers `D = 1, 2, 3` and the wide tier `D = 33`; the
+Tier `D` (the fast tiers `D = 1, ..., 5` and the wide tier `D = 33`; the
 argument is the same for every `D >= 1`) stores each kind in `D` limbs per
 polynomial degree:
 `D` for coordinates and differences, `2D` for the degree-2 kinds, `3D`, `4D`,
@@ -180,20 +180,20 @@ the largest `INSPHERE_DET` 5 bits below its bound.)
 Per predicate and tier, bits needed (magnitude plus sign) at the tier's
 widest `W` against bits available:
 
-| predicate | intermediate | tier 1, `W = 61` | tier 2, `W = 125` | tier 3, `W = 189` | tier 33, `W = 2109` |
-|---|---|--:|--:|--:|--:|
-| all | scaled coordinates | 62 / 64 | 126 / 128 | 190 / 192 | 2110 / 2112 |
-| all | differences | 63 / 64 | 127 / 128 | 191 / 192 | 2111 / 2112 |
-| all | products of two differences | 125 / 128 | 253 / 256 | 381 / 384 | 4221 / 4224 |
-| all | 2×2 minors; the `orient2d` determinant | 126 / 128 | 254 / 256 | 382 / 384 | 4222 / 4224 |
-| `incircle` | lifted terms `x² + y²` | 126 / 128 | 254 / 256 | 382 / 384 | 4222 / 4224 |
-| `insphere` | lifted terms `x² + y² + z²` | 127 / 128 | 255 / 256 | 383 / 384 | 4223 / 4224 |
-| `orient3d`, `insphere` | difference × 2×2 minor | 188 / 192 | 380 / 384 | 572 / 576 | 6332 / 6336 |
-| `orient3d`, `insphere` | 3×3 minors; the `orient3d` determinant and its partial sum | 190 / 192 | 382 / 384 | 574 / 576 | 6334 / 6336 |
-| `incircle` | lift × 2×2 minor | 251 / 256 | 507 / 512 | 763 / 768 | 8443 / 8448 |
-| `incircle` | the determinant and its partial sum | 253 / 256 | 509 / 512 | 765 / 768 | 8445 / 8448 |
-| `insphere` | lift × 3×3 minor | 316 / 320 | 636 / 640 | 956 / 960 | 10556 / 10560 |
-| `insphere` | the determinant and its partial sums | 318 / 320 | 638 / 640 | 958 / 960 | 10558 / 10560 |
+| predicate | intermediate | tier 1, `W = 61` | tier 2, `W = 125` | tier 3, `W = 189` | tier 4, `W = 253` | tier 5, `W = 317` | tier 33, `W = 2109` |
+|---|---|--:|--:|--:|--:|--:|--:|
+| all | scaled coordinates | 62 / 64 | 126 / 128 | 190 / 192 | 254 / 256 | 318 / 320 | 2110 / 2112 |
+| all | differences | 63 / 64 | 127 / 128 | 191 / 192 | 255 / 256 | 319 / 320 | 2111 / 2112 |
+| all | products of two differences | 125 / 128 | 253 / 256 | 381 / 384 | 509 / 512 | 637 / 640 | 4221 / 4224 |
+| all | 2×2 minors; the `orient2d` determinant | 126 / 128 | 254 / 256 | 382 / 384 | 510 / 512 | 638 / 640 | 4222 / 4224 |
+| `incircle` | lifted terms `x² + y²` | 126 / 128 | 254 / 256 | 382 / 384 | 510 / 512 | 638 / 640 | 4222 / 4224 |
+| `insphere` | lifted terms `x² + y² + z²` | 127 / 128 | 255 / 256 | 383 / 384 | 511 / 512 | 639 / 640 | 4223 / 4224 |
+| `orient3d`, `insphere` | difference × 2×2 minor | 188 / 192 | 380 / 384 | 572 / 576 | 764 / 768 | 956 / 960 | 6332 / 6336 |
+| `orient3d`, `insphere` | 3×3 minors; the `orient3d` determinant and its partial sum | 190 / 192 | 382 / 384 | 574 / 576 | 766 / 768 | 958 / 960 | 6334 / 6336 |
+| `incircle` | lift × 2×2 minor | 251 / 256 | 507 / 512 | 763 / 768 | 1019 / 1024 | 1275 / 1280 | 8443 / 8448 |
+| `incircle` | the determinant and its partial sum | 253 / 256 | 509 / 512 | 765 / 768 | 1021 / 1024 | 1277 / 1280 | 8445 / 8448 |
+| `insphere` | lift × 3×3 minor | 316 / 320 | 636 / 640 | 956 / 960 | 1276 / 1280 | 1596 / 1600 | 10556 / 10560 |
+| `insphere` | the determinant and its partial sums | 318 / 320 | 638 / 640 | 958 / 960 | 1278 / 1280 | 1598 / 1600 | 10558 / 10560 |
 
 This table is generated: `tools/integer_stage_widths.py src/integer_stage.h
 --table`. The script propagates the largest magnitudes above as exact Python
@@ -330,11 +330,12 @@ Each predicate has two entry functions. Both call `scale()` and return
 The first (`SHEWCHUK_INTEGER_STAGE_DECIDE`) is the request
 `exact_or_floating_point`:
 
-1. the first of `W <= 61`, `W <= 125`, `W <= 189` that holds selects a fast
-   tier, which decides;
-2. else (`W > 189`, `wide_or_refused_<predicate>()`): `refused` if the
-   coordinates are inside the floating-point domain, and the wide tier
-   decides if they are not.
+1. the first of `W <= 61`, `W <= 125`, `W <= 189` that holds selects one of
+   the tiers 1 to 3, which decides;
+2. else (`beyond_tier_3_<predicate>()`), the first of `W <= 253`,
+   `W <= 317` that holds selects tier 4 or 5, which decides;
+3. else (`W > 317`): `refused` if the coordinates are inside the
+   floating-point domain, and the wide tier decides if they are not.
 
 The second takes a `request` (`SHEWCHUK_INTEGER_STAGE_OTHER_REQUESTS`) and
 puts one step in front of the first:
@@ -343,12 +344,12 @@ puts one step in front of the first:
   inside the floating-point domain, `refused`. Otherwise the first function
   runs, and it cannot refuse: the coordinates are outside the domain, or all
   zero (`W = 0`, tier 1);
-- `always_exact`: if `W > 189`, the wide tier decides. Otherwise the first
+- `always_exact`: if `W > 317`, the wide tier decides. Otherwise the first
   function runs, and it cannot refuse: a fast tier holds the coordinates;
 - `exact_or_floating_point`: the first function.
 
 So, under every request: `refused` only inside the floating-point domain;
-under `exact_or_floating_point` only for `W > 189`; never under
+under `exact_or_floating_point` only for `W > 317`; never under
 `always_exact`.
 
 A tier therefore never runs outside the range section 3 covers: a fast tier

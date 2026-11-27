@@ -35,9 +35,9 @@ inline bool integer_stage_precedes(Pred pred, int stage) {
   return stage == STAGE_B || stage == STAGE_BX || stage == STAGE_C || stage == STAGE_D;
 }
 
-// The widest width the library's integer stage accepts (checked against the
-// library's own constant in test_integer_stage.cpp).
-inline constexpr int INTEGER_STAGE_MAX_WIDTH = 189;
+// The widest width the library's integer stage accepts in its fast tiers
+// (checked against the library's own constant in test_integer_stage.cpp).
+inline constexpr int INTEGER_STAGE_MAX_WIDTH = 317;
 
 // Where the set bits of `count` coordinates are, as binary exponents.
 struct Extent {
@@ -99,7 +99,7 @@ inline bool in_floating_point_domain(Pred pred, const double* coords) {
 inline constexpr int INTEGER_STAGE_WIDE_TIER = 33;
 
 // The tier of the integer stage that must decide a case once the stage is
-// asked to: 1, 2 or 3 by width; for a wider case the wide tier if the case is
+// asked to: 1 to 5 by width; for a wider case the wide tier if the case is
 // outside the floating-point domain, and 0 (the stage leaves the case to the
 // floating-point stages) if it is inside. 0 also for a case that is not
 // finite.
@@ -108,7 +108,9 @@ inline int expected_integer_tier(Pred pred, const double* coords) {
   if (width < 0) return 0;
   if (width <= 61) return 1;
   if (width <= 125) return 2;
-  if (width <= INTEGER_STAGE_MAX_WIDTH) return 3;
+  if (width <= 189) return 3;
+  if (width <= 253) return 4;
+  if (width <= INTEGER_STAGE_MAX_WIDTH) return 5;
   return in_floating_point_domain(pred, coords) ? 0 : INTEGER_STAGE_WIDE_TIER;
 }
 

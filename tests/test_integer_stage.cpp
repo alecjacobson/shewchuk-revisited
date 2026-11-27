@@ -18,7 +18,7 @@
 //      the largest doubles, the whole exponent range, infinities and NaNs;
 //   3. force-stage: the stage as the sole decider on every corpus case it
 //      accepts must return the oracle's sign, must accept exactly the cases
-//      whose width (tests/width.h, independent code) is at most 189, in the
+//      whose width (tests/width.h, independent code) is at most 317, in the
 //      tier that width selects, and must see enough cases in every tier;
 //   4. worst-case magnitudes: inputs built to make every intermediate as
 //      large as possible, at widths exactly at each tier's limit and one past
@@ -59,7 +59,9 @@ namespace {
 
 static_assert(stage::max_width(stage::num_tiers) == INTEGER_STAGE_MAX_WIDTH,
               "tests/width.h must state the library's widest fast tier");
-static_assert(stage::max_width(1) == 61 && stage::max_width(2) == 125,
+static_assert(stage::max_width(1) == 61 && stage::max_width(2) == 125 &&
+                  stage::max_width(3) == 189 && stage::max_width(4) == 253 &&
+                  stage::num_tiers == 5,
               "tests/width.h must state the library's tier limits");
 static_assert(stage::wide_tier == INTEGER_STAGE_WIDE_TIER,
               "tests/width.h must state the library's wide tier");
@@ -68,7 +70,7 @@ static_assert(stage::floating_point_max_exponent == FLOATING_POINT_MAX_EXPONENT 
               "tests/width.h must state the library's floating-point domain");
 
 // Index of a tier in a table with one column per tier: 0 for "not decided",
-// 1 to 3 for the fast tiers, 4 for the wide tier.
+// 1 to 5 for the fast tiers, 6 for the wide tier.
 int tier_column(int tier) { return tier == stage::wide_tier ? stage::num_tiers + 1 : tier; }
 
 // The integer stage's answer for a case in the suite's flat layout.
@@ -240,17 +242,21 @@ void test_limb_arithmetic() {
     }
   }
 
-  // Every operand size the three tiers use (D, 2D, ..., 5D limbs) ...
+  // Every operand size the five fast tiers use (D, 2D, ..., 5D limbs) ...
   test_add_sub<1>(r, 2000), test_add_sub<2>(r, 2000), test_add_sub<3>(r, 2000);
   test_add_sub<4>(r, 2000), test_add_sub<5>(r, 2000), test_add_sub<6>(r, 2000);
   test_add_sub<8>(r, 1000), test_add_sub<9>(r, 1000), test_add_sub<10>(r, 1000);
-  test_add_sub<12>(r, 1000), test_add_sub<15>(r, 1000);
+  test_add_sub<12>(r, 1000), test_add_sub<15>(r, 1000), test_add_sub<16>(r, 1000);
+  test_add_sub<20>(r, 1000), test_add_sub<25>(r, 1000);
   // ... and every product: D x D, D x 2D, 2D x 2D, 2D x 3D.
   test_mul<1, 1>(r, 4000), test_mul<1, 2>(r, 4000), test_mul<2, 2>(r, 4000);
   test_mul<2, 3>(r, 4000);
   test_mul<2, 4>(r, 2000), test_mul<4, 4>(r, 2000), test_mul<4, 6>(r, 2000);
   test_mul<3, 3>(r, 2000), test_mul<3, 6>(r, 2000), test_mul<6, 6>(r, 1000);
   test_mul<6, 9>(r, 1000);
+  test_mul<4, 8>(r, 1000), test_mul<8, 8>(r, 1000), test_mul<8, 12>(r, 1000);
+  test_mul<5, 5>(r, 1000), test_mul<5, 10>(r, 1000), test_mul<10, 10>(r, 1000);
+  test_mul<10, 15>(r, 1000);
 
   // The most negative value times itself: the largest product there is.
   stage::Int<2> most_negative = {{0, stage::limb{1} << 63}};
@@ -418,15 +424,18 @@ void test_corpus(const Tier& tier) {
     total[generator.pred]++;
   });
   std::printf("\nForce-stage on the corpus (tier %s): cases decided by each tier of the integer "
-              "stage\n%-9s %9s %9s %9s %9s %9s\n",
-              tier.name, "predicate", "cases", "tier 1", "tier 2", "tier 3", "refused");
+              "stage\n%-9s %9s %9s %9s %9s %9s %9s %9s\n",
+              tier.name, "predicate", "cases", "tier 1", "tier 2", "tier 3", "tier 4", "tier 5",
+              "refused");
+  static_assert(stage::num_tiers == 5, "one column per fast tier");
   for (int p = 0; p < NUM_PREDS; p++) {
-    std::printf("%-9s %9ld %9ld %9ld %9ld %9ld\n", PRED_NAME[p], total[p], decided[p][1],
-                decided[p][2], decided[p][3], decided[p][0]);
+    std::printf("%-9s %9ld %9ld %9ld %9ld %9ld %9ld %9ld\n", PRED_NAME[p], total[p], decided[p][1],
+                decided[p][2], decided[p][3], decided[p][4], decided[p][5], decided[p][0]);
     // Every fast tier, and the refusal, must see a real share of each
     // predicate's cases: at least 2%. The corpus is inside the floating-point
     // domain, so the wide tier decides none of it on the first request
-    // (check_case runs it on one refused case in 16).
+    // (check_case runs it on one refused case in 16). Tiers 4 and 5 have the
+    // "span_tier" families of the corpus for this.
     for (int t = 0; t <= stage::num_tiers; t++) CHECK(decided[p][t] >= total[p] / 50);
     CHECK(decided[p][stage::num_tiers + 1] == 0);
   }
@@ -508,13 +517,18 @@ void test_extremes_at(Rng& r, Pred pred, int W, long budget, long* tiers_seen) {
   const std::uint64_t patterns = std::uint64_t{1} << count;
   const bool exhaustive = patterns * count <= static_cast<std::uint64_t>(budget);
   // Any position in the format that holds W bits: scaled unit 2^low with
-  // low >= -1074 and low + W <= 1024. Mostly near the extremes.
+  // low >= -1074 and low + W <= 1024. Mostly near the extremes, and, where
+  // the width allows it, inside the floating-point domain of every predicate
+  // (largest exponent low + W - 1 <= 201, and 5 * low >= -914), so that the
+  // widths past the fast tiers see refusals as well as the wide tier.
   auto random_low = [&] {
     switch (r.below(4)) {
       case 0: return -1074;
       case 1: return 1024 - W;
       case 2: return r.range(-1074, 1024 - W);
-      default: return 1024 - W >= 60 ? r.range(-60, 60) : r.range(-1074, 1024 - W);
+      default:
+        if (W > 200 && 202 - W >= -182) return r.range(-182, 202 - W);
+        return 1024 - W >= 60 ? r.range(-60, 60) : r.range(-1074, 1024 - W);
     }
   };
   double c[MAX_COORDS];
@@ -546,14 +560,17 @@ void test_extremes(long budget) {
   // Each fast tier's limit and one past it, the widths around 53 bits where
   // the shape of the largest magnitude changes, the limb boundaries, and the
   // narrowest cases.
-  const int widths[] = {1,  2,  3,  52,  53,  54,  60,  61,  62,  63, 64,
-                        65, 66, 124, 125, 126, 127, 128, 129, 188, 189};
+  const int widths[] = {1,   2,   3,   52,  53,  54,  60,  61,  62,  63,  64,  65,
+                        66,  124, 125, 126, 127, 128, 129, 188, 189, 190, 191, 192,
+                        193, 252, 253, 254, 255, 256, 257, 316, 317};
   static_assert(stage::max_width(1) == 61 && stage::max_width(2) == 125 &&
-                stage::max_width(3) == 189, "list the limits and limit + 1 above");
+                stage::max_width(3) == 189 && stage::max_width(4) == 253 &&
+                stage::max_width(5) == 317 && stage::num_tiers == 5,
+                "list the limits and limit + 1 above");
   // The wide tier: widths no fast tier holds, up to the largest width there
   // is (a coordinate with its lowest bit at 2^-1074 and one of magnitude
   // 2^1023). These cases are slow (the oracle too), so there are fewer.
-  const int wide_widths[] = {190, 191, 192, 253, 509, 1100, 2047, 2048, 2097, 2098};
+  const int wide_widths[] = {318, 319, 320, 381, 509, 1100, 2047, 2048, 2097, 2098};
   static_assert(stage::max_finite_width == 2098, "list the largest width above");
   for (int p = 0; p < NUM_PREDS; p++) {
     long tiers_seen[stage::num_tiers + 2] = {};
@@ -565,9 +582,9 @@ void test_extremes(long budget) {
       test_extremes_at(r, static_cast<Pred>(p), W, wide_budget, tiers_seen);
     }
     std::printf("worst-case magnitudes, %s: %ld cases in tier 1, %ld in tier 2, %ld in tier 3, "
-                "%ld in the wide tier, %ld refused\n",
-                PRED_NAME[p], tiers_seen[1], tiers_seen[2], tiers_seen[3],
-                tiers_seen[stage::num_tiers + 1], tiers_seen[0]);
+                "%ld in tier 4, %ld in tier 5, %ld in the wide tier, %ld refused\n",
+                PRED_NAME[p], tiers_seen[1], tiers_seen[2], tiers_seen[3], tiers_seen[4],
+                tiers_seen[5], tiers_seen[stage::num_tiers + 1], tiers_seen[0]);
     // (Refusals need a case that is wide and inside the floating-point
     // domain, which only a part of the wide cases are.)
     for (int t = 0; t <= stage::num_tiers + 1; t++) CHECK(tiers_seen[t] > (t == 0 ? 40 : 100));
@@ -777,6 +794,8 @@ int main(int argc, char** argv) {
   Rng r(0x7ee7);
   test_too_narrow_tier<1>(r);
   test_too_narrow_tier<2>(r);
+  test_too_narrow_tier<4>(r);
+  test_too_narrow_tier<5>(r);
   CHECK(failure_count() == 0);
   return finish("integer stage");
 }

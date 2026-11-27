@@ -57,7 +57,7 @@ extern "C" {
 extern int shewchuk_hooked_last_stage;
 extern int shewchuk_hooked_last_path;
 /* The tier of the integer stage that decided the most recent call it decided:
- * 1, 2 or 3 for the fast tiers, 33 for the wide tier. */
+ * 1 to 5 for the fast tiers, 33 for the wide tier. */
 extern int shewchuk_hooked_last_integer_tier;
 
 double shewchuk_hooked_orient2d(const double *pa, const double *pb, const double *pc);
